@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/loadflow.py": {
+      "excludeFiles": "{node_modules/**,.next/**,src/**,tests_py/**,docs/**,**/tests/**,**/test_*.py}",
+      "maxDuration": 30
+    }
+  }
+}
