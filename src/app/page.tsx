@@ -1,0 +1,22 @@
+import { EXAMPLE_LIBRARY, findIslands, validateProject } from "@/core";
+import { SAMPLE_PROJECT } from "@/core/sample";
+
+export default function Home() {
+  const issues = validateProject(SAMPLE_PROJECT, EXAMPLE_LIBRARY);
+  const islands = findIslands(SAMPLE_PROJECT);
+  return (
+    <main>
+      <h1>Open Power Design</h1>
+      <p>Foundation preview: data model, equipment library, topology and validation. The SLD editor and solvers come next.</p>
+      <h2>{SAMPLE_PROJECT.name}</h2>
+      <ul>
+        <li>{SAMPLE_PROJECT.buses.length} buses, {SAMPLE_PROJECT.lines.length} lines, {SAMPLE_PROJECT.transformers.length} transformers</li>
+        <li>{islands.length} island(s); energised: {islands.filter((i) => i.energised).length}</li>
+      </ul>
+      <h3>Validation</h3>
+      {issues.length === 0 ? <p>No issues.</p> : (
+        <ul>{issues.map((i, n) => <li key={n}>[{i.severity}] {i.message}</li>)}</ul>
+      )}
+    </main>
+  );
+}
