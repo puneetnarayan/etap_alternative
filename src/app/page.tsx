@@ -1,5 +1,6 @@
 import { EXAMPLE_LIBRARY, findIslands, validateProject } from "@/core";
 import { SAMPLE_PROJECT } from "@/core/sample";
+import RunLoadFlow from "./RunLoadFlow";
 
 export default function Home() {
   const issues = validateProject(SAMPLE_PROJECT, EXAMPLE_LIBRARY);
@@ -7,7 +8,7 @@ export default function Home() {
   return (
     <main>
       <h1>Open Power Design</h1>
-      <p>Foundation preview: data model, equipment library, topology and validation. The SLD editor and solvers come next.</p>
+      <p>Foundation preview: data model, equipment library, topology and validation. Load flow runs on the server via pandapower; the SLD editor comes next.</p>
       <h2>{SAMPLE_PROJECT.name}</h2>
       <ul>
         <li>{SAMPLE_PROJECT.buses.length} buses, {SAMPLE_PROJECT.lines.length} lines, {SAMPLE_PROJECT.transformers.length} transformers</li>
@@ -17,6 +18,8 @@ export default function Home() {
       {issues.length === 0 ? <p>No issues.</p> : (
         <ul>{issues.map((i, n) => <li key={n}>[{i.severity}] {i.message}</li>)}</ul>
       )}
+      <h3>Load flow</h3>
+      <RunLoadFlow project={SAMPLE_PROJECT} library={EXAMPLE_LIBRARY} />
     </main>
   );
 }
