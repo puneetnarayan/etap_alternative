@@ -1,5 +1,6 @@
 import type { Library } from "./library";
-import type { Project } from "./schema";
+import { ProjectSchema, type Project } from "./schema";
+import { validateProject } from "./validate";
 
 /** Shape returned by POST /api/loadflow (see solver/loadflow.py). */
 export interface LoadFlowResult {
@@ -31,4 +32,26 @@ export async function runLoadFlow(
     throw new Error(msg);
   }
   return body as LoadFlowResult;
+}
+
+export type Prepared = { ok: true; project: Project } | { ok: false; problems: string[] };
+
+/** Schema-check and validate a project before sending it to the solver; problems are phrased for end users. */
+export function prepareForSolve(project: unknown, library: Library): Prepared {
+  const parsed = ProjectSchema.safeParse(project);
+  if (!parsed.success) {
+    const raw = project as Record<string, { id?: string }[] | undefined>;
+    return {
+      ok: false,
+      problems: parsed.error.issues.map((i) => {
+        const [coll, idx, ...rest] = i.path;
+        const el = typeof coll === "string" && typeof idx === "number" ? raw?.[coll]?.[idx]?.id : undefined;
+        const where = el ? `${el} › ${rest.join(".")}` : i.path.join(".") || "project";
+        return `${where}: ${i.message}`;
+      }),
+    };
+  }
+  const errors = validateProject(parsed.data, library).filter((i) => i.severity === "error");
+  if (errors.length > 0) return { ok: false, problems: errors.map((e) => e.message) };
+  return { ok: true, project: parsed.data };
 }
