@@ -3,8 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import { readSheet } from "read-excel-file/universal";
 import {
-  DEFAULT_OPTIONS, TRANSFORMER_OPTIONS, buildReportBlob, parseLoadSheet, sizeTransformers,
-  type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
+  DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, parseLoadSheet, sizeTransformers,
+  type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
 } from "@/core";
 
 const th = { padding: "4px 10px", borderBottom: "1px solid #888", textAlign: "right" as const, whiteSpace: "nowrap" as const };
@@ -21,12 +21,6 @@ function num(s: string, fallback: number, min: number, max: number) {
   return Number.isFinite(v) && v > min && v <= max ? v : fallback;
 }
 
-/** "2000, 2500 4000" -> [2000, 2500, 4000]; ignores anything that is not a positive number. */
-function parseRatings(s: string): number[] {
-  const list = s.split(/[\s,;]+/).map(Number).filter((v) => Number.isFinite(v) && v > 0);
-  return [...new Set(list)].sort((a, b) => a - b);
-}
-
 export default function TransformerSizing() {
   const [rows, setRows] = useState<RawLoadRow[] | null>(null);
   const [fileName, setFileName] = useState("");
@@ -34,34 +28,31 @@ export default function TransformerSizing() {
   const [dragging, setDragging] = useState(false);
   const [txId, setTxId] = useState<string>(TRANSFORMER_OPTIONS[0].id);
   const [combination, setCombination] = useState<Combination>("auto");
-  const [ratingsText, setRatingsText] = useState(DEFAULT_OPTIONS.ratingsKva.join(", "));
+  const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
   const [pfDol, setPfDol] = useState("0.7");
   const [pfVfd, setPfVfd] = useState("0.9");
   const [pfFeeder, setPfFeeder] = useState("0.7");
-  const [normalLimit, setNormalLimit] = useState("80");
-  const [contLimit, setContLimit] = useState("90");
-  const [stepUp, setStepUp] = useState<SizingOptions["stepUp"]>("min-installed");
-  const [totalBasis, setTotalBasis] = useState<SizingOptions["totalBasis"]>("arithmetic");
   const input = useRef<HTMLInputElement>(null);
 
   const tx = TRANSFORMER_OPTIONS.find((t) => t.id === txId)!;
-  const parsedRatings = parseRatings(ratingsText);
-  const ratingsValid = parsedRatings.length > 0;
 
   const opts: SizingOptions = useMemo(() => ({
     ...DEFAULT_OPTIONS,
     efficiency: num(eff, 95, 0, 100) / 100,
     powerFactor: { DOL: num(pfDol, 0.7, 0, 1), VFD: num(pfVfd, 0.9, 0, 1), FEEDER: num(pfFeeder, 0.7, 0, 1) },
-    normalLimit: num(normalLimit, 80, 0, 100) / 100,
-    contingencyLimit: num(contLimit, 90, 0, 100) / 100,
-    ratingsKva: parsedRatings.length > 0 ? parsedRatings : DEFAULT_OPTIONS.ratingsKva,
+    ratingsKva: [rating],
     counts: combination === "auto" ? [2, 3] : [Number(combination)],
-    stepUp,
-    totalBasis,
-  }), [eff, pfDol, pfVfd, pfFeeder, normalLimit, contLimit, ratingsText, combination, stepUp, totalBasis]);
+  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination]);
 
   const result = useMemo(() => (rows ? sizeTransformers(rows, tx.secondaryV, opts) : null), [rows, tx, opts]);
+  // When the chosen rating cannot carry the load, find what would (any standard rating, same number of transformers).
+  const alternative = useMemo(
+    () => (rows && result && result.loads.length > 0 && !result.recommended
+      ? sizeTransformers(rows, tx.secondaryV, { ...opts, ratingsKva: STANDARD_RATINGS_KVA }).recommended
+      : undefined),
+    [rows, result, tx, opts],
+  );
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
@@ -114,12 +105,14 @@ export default function TransformerSizing() {
           </select>
           <span> Only loads at {tx.secondaryV} V are included; other voltage levels are listed as excluded.</span>
         </label>
-        <label>
-          Rating(s) in kVA:{" "}
-          <input aria-label="Transformer ratings in kVA" style={{ width: 200 }} value={ratingsText} onChange={(e) => setRatingsText(e.target.value)} />
-          <span> Enter one rating (e.g. 2000) if that is all you use, or several separated by commas.</span>
-        </label>
-        {!ratingsValid && <span role="alert" style={{ color: BAD }}>Enter at least one rating, e.g. 2000. Using the defaults meanwhile.</span>}
+        <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
+          <legend>Transformer rating</legend>
+          {STANDARD_RATINGS_KVA.map((r) => (
+            <label key={r} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
+              <input type="radio" name="rating" checked={rating === r} onChange={() => setRating(r)} /> {fmt(r, 0)} kVA
+            </label>
+          ))}
+        </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Number of transformers</legend>
           {([["auto", "Automatic (2 or 3, show both)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"], ["3", "3 transformers (3 incomers, 2 bus couplers)"]] as const).map(([v, label]) => (
@@ -137,36 +130,21 @@ export default function TransformerSizing() {
           <label>Power factor DOL <input style={{ width: 60 }} value={pfDol} onChange={(e) => setPfDol(e.target.value)} /></label>
           <label>Power factor VFD <input style={{ width: 60 }} value={pfVfd} onChange={(e) => setPfVfd(e.target.value)} /></label>
           <label>Power factor feeder <input style={{ width: 60 }} value={pfFeeder} onChange={(e) => setPfFeeder(e.target.value)} /></label>
-          <label>Max loading, normal (%) <input style={{ width: 60 }} value={normalLimit} onChange={(e) => setNormalLimit(e.target.value)} /></label>
-          <label>Max loading, one out (%) <input style={{ width: 60 }} value={contLimit} onChange={(e) => setContLimit(e.target.value)} /></label>
         </div>
         <p style={{ margin: "4px 0" }}>
-          <label>
-            Total kVA is formed as:{" "}
-            <select value={totalBasis} onChange={(e) => setTotalBasis(e.target.value as SizingOptions["totalBasis"])}>
-              <option value="arithmetic">Sum of each load&apos;s kVA (conservative)</option>
-              <option value="vector">√((Σ kW)² + (Σ kvar)²)</option>
-            </select>
-          </label>
+          Fixed: maximum loading {fmt(DEFAULT_OPTIONS.normalLimit * 100, 0)} % in normal running and {fmt(DEFAULT_OPTIONS.contingencyLimit * 100, 0)} % on each remaining
+          transformer with one out. Total kVA is the sum of each load&apos;s kVA. All loads count at 100 %, working (W) and standby (S) alike.
         </p>
-        <p style={{ margin: "4px 0" }}>
-          <label>
-            Order of preference when the first option does not fit:{" "}
-            <select value={stepUp} onChange={(e) => setStepUp(e.target.value as SizingOptions["stepUp"])}>
-              <option value="min-installed">Lowest total installed kVA first</option>
-              <option value="count-first">Add a 3rd transformer before increasing rating</option>
-            </select>
-          </label>
-        </p>
-        <p style={{ margin: "4px 0" }}>All loads are counted at 100 % (standby included).</p>
       </details>
 
-      {result && <Results result={result} tx={tx.label} opts={opts} fileName={fileName} />}
+      {result && <Results result={result} tx={tx.label} opts={opts} fileName={fileName} alternative={alternative} />}
     </div>
   );
 }
 
-function Results({ result, tx, opts, fileName }: { result: SizingResult; tx: string; opts: SizingOptions; fileName: string }) {
+function Results({ result, tx, opts, fileName, alternative }: {
+  result: SizingResult; tx: string; opts: SizingOptions; fileName: string; alternative?: Candidate;
+}) {
   const rec = result.recommended;
   const errors = result.issues.filter((i) => i.severity === "error");
   const excluded = result.issues.filter((i) => i.severity === "excluded");
@@ -185,12 +163,15 @@ function Results({ result, tx, opts, fileName }: { result: SizingResult; tx: str
               <div style={{ fontSize: 20 }}><b>{rec.count} × {fmt(rec.ratingKva, 0)} kVA</b> transformers, {tx}</div>
             ) : (
               <div role="alert" style={{ color: BAD, fontSize: 18 }}>
-                No configuration fits: total load {fmt(result.totalKva)} kVA is above what the selected number of transformers and rating(s) can carry within the limits.
+                No configuration fits: total load {fmt(result.totalKva)} kVA is above what the selected number of transformers at {fmt(opts.ratingsKva[0], 0)} kVA can carry within the limits.
+                {alternative
+                  ? <> It would fit with <b>{alternative.count} × {fmt(alternative.ratingKva, 0)} kVA</b>.</>
+                  : <> No standard rating fits with the selected number of transformers.</>}
               </div>
             )}
             <div>
               Total load <b>{fmt(result.totalKva)} kVA</b> · {fmt(t.kw)} kW · {fmt(t.kvar)} kvar · power factor {fmt(t.powerFactor, 2)}
-              {Math.abs(t.kvaArithmetic - t.kvaVector) > 0.05 && <> (arithmetic sum of kVA {fmt(t.kvaArithmetic)}, vector sum {fmt(t.kvaVector)}; sizing uses the {opts.totalBasis === "vector" ? "vector" : "arithmetic"} figure)</>}
+
             </div>
             {rec && (
               <div>
@@ -206,18 +187,18 @@ function Results({ result, tx, opts, fileName }: { result: SizingResult; tx: str
 
       {result.loads.length > 0 && (
         <>
-          <h4>Loads included ({result.loads.length})</h4>
+          <h4>Loads included ({result.loads.length}: {result.loads.filter((l) => l.status === "W").length} W, {result.loads.filter((l) => l.status === "S").length} S)</h4>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse" }}>
               <thead><tr>
-                <th style={th}>Row</th><th style={{ ...th, ...left }}>Description</th><th style={{ ...th, ...left }}>Group</th>
+                <th style={th}>Row</th><th style={{ ...th, ...left }}>Description</th><th style={th}>W/S</th><th style={{ ...th, ...left }}>Group</th>
                 <th style={{ ...th, ...left }}>Treated as</th><th style={th}>Rated kW</th><th style={th}>kW (input)</th><th style={th}>kvar</th>
                 <th style={th}>pf</th><th style={th}>kVA</th><th style={{ ...th, ...left }}>Basis</th>
               </tr></thead>
               <tbody>
                 {result.loads.map((l) => (
                   <tr key={l.rowNumber}>
-                    <td style={td}>{l.rowNumber}</td><td style={{ ...td, ...left }}>{l.description}</td><td style={{ ...td, ...left }}>{l.group ?? ""}</td>
+                    <td style={td}>{l.rowNumber}</td><td style={{ ...td, ...left }}>{l.description}</td><td style={td}>{l.status ?? ""}</td><td style={{ ...td, ...left }}>{l.group ?? ""}</td>
                     <td style={{ ...td, ...left }}>{l.kind === "feeder" ? "Feeder" : `${l.type} motor`}</td>
                     <td style={td}>{l.ratedKw === undefined ? "" : fmt(l.ratedKw)}</td>
                     <td style={td}>{fmt(l.kw)}</td><td style={td}>{fmt(l.kvar)}</td><td style={td}>{fmt(l.powerFactor, 2)}</td>
@@ -225,13 +206,16 @@ function Results({ result, tx, opts, fileName }: { result: SizingResult; tx: str
                   </tr>
                 ))}
                 <tr>
-                  <td style={td} /><td style={{ ...td, ...left }}><b>Total</b></td><td /><td /><td />
+                  <td style={td} /><td style={{ ...td, ...left }}><b>Total</b></td><td /><td /><td /><td />
                   <td style={td}><b>{fmt(t.kw)}</b></td><td style={td}><b>{fmt(t.kvar)}</b></td><td style={td}><b>{fmt(t.powerFactor, 2)}</b></td>
                   <td style={td}><b>{fmt(result.totalKva)}</b></td><td />
                 </tr>
               </tbody>
             </table>
           </div>
+          <p style={{ margin: "4px 0" }}>
+            Total kVA is the arithmetic sum of the loads&apos; kVA, so it is slightly above √(kW² + kvar²); this is the conservative figure used for sizing.
+          </p>
         </>
       )}
 
@@ -286,11 +270,11 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
                 <td style={{ ...td, ...left }}>
                   <details><summary>{s.name} ({fmt(c.chosen.ratingKva, 0)} kVA)</summary>
                     <ul style={{ margin: "4px 0" }}>
-                      {s.loads.map((l) => <li key={l.rowNumber}>{l.description || `Row ${l.rowNumber}`}{l.group ? ` [${l.group}]` : ""} – {fmt(l.kva)} kVA</li>)}
+                      {s.loads.map((l) => <li key={l.rowNumber}>{l.description || `Row ${l.rowNumber}`}{l.status ? ` (${l.status})` : ""}{l.group ? ` [${l.group}]` : ""} – {fmt(l.kva)} kVA</li>)}
                     </ul>
                   </details>
                 </td>
-                <td style={td}>{s.loads.length}</td><td style={td}>{fmt(s.kw)}</td><td style={td}>{fmt(s.kvar)}</td>
+                <td style={td}>{s.loads.length} ({s.loads.filter((l) => l.status === "W").length} W, {s.loads.filter((l) => l.status === "S").length} S)</td><td style={td}>{fmt(s.kw)}</td><td style={td}>{fmt(s.kvar)}</td>
                 <td style={td}>{fmt(s.kva)}</td><td style={td}>{fmt(s.loadingPct)}</td>
                 <td style={{ ...td, ...left }}>{s.withinNormalLimit ? "✔ within" : "✘ over"}</td>
               </tr>

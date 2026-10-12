@@ -31,6 +31,8 @@ describe("Excel report", () => {
     expect(find(s, "Total kVA used for sizing")![1] as number).toBeCloseTo(result.totalKva, 6);
     expect(find(s, "Total kW (input)")![1] as number).toBeCloseTo(result.totals.kw, 6);
     expect(find(s, "Total kvar")![1] as number).toBeCloseTo(result.totals.kvar, 6);
+    expect(find(s, "Working (W) / standby (S)")![1]).toBe("12 W / 2 S");
+    expect(find(s, "Total kVA, vector sum")).toBeUndefined();
     expect(find(s, "Incomers")![1]).toBe(3);
     expect(find(s, "Bus couplers")![1]).toBe(2);
   });
@@ -39,7 +41,8 @@ describe("Excel report", () => {
     const on = await report(true);
     const off = await report(false);
     const hdr = (r: Awaited<ReturnType<typeof report>>) => r.sheets["Loads"][0] as string[];
-    expect(hdr(on)).toEqual(expect.arrayContaining(["kW (input)", "kvar", "Power factor"]));
+    expect(hdr(on)).toEqual(expect.arrayContaining(["W/S", "kW (input)", "kvar", "Power factor"]));
+    expect(hdr(off)).toContain("W/S");
     for (const h of ["kW (input)", "kvar", "Power factor"]) expect(hdr(off)).not.toContain(h);
     expect(find(off.sheets["Summary"], "Total kW (input)")).toBeUndefined();
     expect(find(off.sheets["Summary"], "Total kvar")).toBeUndefined();
@@ -71,6 +74,15 @@ describe("Excel report", () => {
     expect(rows[0][0]).toBe("2 × 4000 kVA transformers, 6600 / 433 V");
     expect(String(rows[2][0])).toContain("2 incomers, 1 bus coupler");
     expect(rows.some((r) => r[0] === "T1" && r[4] === "OK")).toBe(true);
+  });
+
+  it("loads sheet carries W and S for each load", async () => {
+    const { sheets } = await report(true);
+    const rows = sheets["Loads"];
+    const col = (rows[0] as string[]).indexOf("W/S");
+    const values = rows.slice(1, -1).map((r) => r[col]);
+    expect(values.filter((v) => v === "S")).toHaveLength(2);
+    expect(values.filter((v) => v === "W")).toHaveLength(12);
   });
 
   it("issues sheet lists the excluded 690 V rows", async () => {

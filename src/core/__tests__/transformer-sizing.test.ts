@@ -3,7 +3,7 @@ import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_OPTIONS, candidatesInOrder, distributeLoads, evaluateCandidate, parseLoadSheet,
-  parseVoltage, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
+  parseStatus, parseVoltage, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
 } from "..";
 
 const row = (o: Partial<RawLoadRow>): RawLoadRow => ({ rowNumber: 2, description: "x", type: "", voltageV: 433, ...o });
@@ -227,6 +227,32 @@ describe("spreadsheet parsing", () => {
     const q = parseLoadSheet([["Description", "Type", "Amps", "kW", "Voltage", "Duty/Standby"], ["a", "DOL", null, 1, 433, "Standby"]]);
     expect(q.rows[0].group).toBeUndefined();
   });
+  it("reads a Working/Standby column as W / S", () => {
+    expect(parseStatus("W").status).toBe("W");
+    expect(parseStatus(" working ").status).toBe("W");
+    expect(parseStatus("Duty").status).toBe("W");
+    expect(parseStatus("S").status).toBe("S");
+    expect(parseStatus("Stand-by").status).toBe("S");
+    expect(parseStatus("").status).toBeUndefined();
+    expect(parseStatus("maybe").unrecognised).toBe("maybe");
+    const p = parseLoadSheet([
+      ["Description", "Type", "Amps", "kW", "Voltage", "Working/Standby (W/S)", "Duty/standby group"],
+      ["Pump A", "DOL", null, 100, 433, "W", "CWP"],
+      ["Pump B", "DOL", null, 100, 433, "S", "CWP"],
+      ["Fan", "VFD", null, 50, 433, "x", null],
+    ]);
+    // the group column is not mistaken for the W/S column and vice versa
+    expect(p.rows.map((r) => r.status)).toEqual(["W", "S", undefined]);
+    expect(p.rows.map((r) => r.group)).toEqual(["CWP", "CWP", undefined]);
+    const r = sizeTransformers(p.rows, 433);
+    expect(r.loads.map((l) => l.status)).toEqual(["W", "S", undefined]);
+    expect(r.issues.some((i) => /not recognised \(use W or S\)/.test(i.message))).toBe(true);
+  });
+  it("accepts a W/S header on its own", () => {
+    const p = parseLoadSheet([["Description", "Type", "Amps", "kW", "Voltage", "W/S"], ["Pump", "DOL", null, 10, 433, "S"]]);
+    expect(p.rows[0].status).toBe("S");
+    expect(p.rows[0].group).toBeUndefined();
+  });
   it("reports missing columns and empty sheets", () => {
     expect(parseLoadSheet([["Description", "kW"]]).errors[0]).toMatch(/Missing column/);
     expect(parseLoadSheet([]).errors[0]).toMatch(/empty/);
@@ -246,6 +272,8 @@ describe("sample workbook end to end", () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toHaveLength(16);
     expect(parsed.rows.filter((r) => r.group).map((r) => r.group)).toEqual(["BFW", "BFW", "CWP", "CWP"]);
+    expect(parsed.rows.filter((r) => r.status === "S").map((r) => r.description)).toEqual(["Boiler feed water pump B", "Cooling water pump B"]);
+    expect(parsed.rows.every((r) => r.status === "W" || r.status === "S")).toBe(true);
 
     // Independent arithmetic from the sample's numbers:
     const dolKw = 185 + 185 + 160 + 160 + 132 + 90 + 315;
