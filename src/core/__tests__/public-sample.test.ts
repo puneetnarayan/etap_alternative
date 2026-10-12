@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { strFromU8, unzipSync } from "fflate";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
@@ -34,8 +35,19 @@ describe("the downloadable sample file", () => {
     expect(p.rows.every((r) => r.status === "W" || r.status === "S")).toBe(true);
     expect(p.rows.every((r) => !r.badFields && !r.statusText)).toBe(true);
     expect(p.rows.filter((r) => r.status === "S").map((r) => r.rowNumber)).toEqual([3, 5, 8, 11]);
-    expect(p.rows.map((r) => r.group).filter(Boolean)).toEqual(["BFW", "BFW", "CWP", "CWP", "Boiler", "Boiler", "Bolier", "ESP", "ESP", "ESP"]);
+    expect(p.rows.map((r) => r.group).filter(Boolean)).toEqual(["BFW", "BFW", "CWP", "CWP", "Boiler", "Boiler", "Boiler", "ESP", "ESP", "ESP"]);
     expect(p.rows.filter((r) => r.voltageV === 690)).toHaveLength(2);
+  });
+
+  it("has no author metadata and no typos in the group names", () => {
+    const parts = unzipSync(new Uint8Array(buf));
+    const core = strFromU8(parts["docProps/core.xml"]);
+    expect(core).not.toMatch(/creator|lastModifiedBy/i);
+    for (const [name, bytes] of Object.entries(parts)) {
+      const text = strFromU8(bytes);
+      expect(text, name).not.toMatch(/Puneet|openpyxl|Narayan/i);
+      expect(text, name).not.toContain("Bolier");
+    }
   });
 
   it("433 V: 18 loads (14 W, 4 S) and the 2 rows at 690 V are listed as excluded", async () => {

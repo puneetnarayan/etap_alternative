@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
+import { strFromU8, unzipSync } from "fflate";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, parseLoadSheet, sizeTransformers, type RawLoadRow, type ReportCell } from "..";
+import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, kindColor, parseLoadSheet, sizeTransformers, type RawLoadRow, type ReportCell } from "..";
 
 /** Show both a set of 2 and a set of 3 (the page starts with 3 only). */
 const BOTH = { ...DEFAULT_OPTIONS, counts: [2, 3] };
@@ -423,5 +424,184 @@ describe("Excel report when loads cannot be balanced / cannot be placed", () => 
     expect(sum.some((r) => String(val(r[1])).startsWith("None: a load is too big"))).toBe(true);
     const row = sum.find((r) => val(r[0]) === "Cannot be placed")!;
     expect(String(val(row[1]))).toContain("L0");
+  });
+});
+
+describe("Excel report: pastel load kinds, number formats, centring, no author metadata", () => {
+  type Styled = { value: string | number | boolean; backgroundColor?: string; format?: string; align?: string };
+  const st = (c: ReportCell): Styled | null => (c !== null && typeof c === "object" ? (c as Styled) : null);
+  const val = (c: ReportCell) => (c !== null && typeof c === "object" ? c.value : c);
+  const build = async (opts = BOTH, includePower = true) => {
+    const raw = await readSheet(buf);
+    const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
+    const o = { transformerLabel: "6600 / 433 V", options: opts, includePower, originalSheet: raw };
+    return { raw, result, o, sheets: buildReportSheets(result, o) };
+  };
+
+  // --- colour science helpers (CIE76 distance between sRGB colours)
+  const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const lab = (h: string) => {
+    const [r, g, b] = rgb(h).map((c) => c / 255).map((c) => (c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92));
+    const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    const X = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047), Y = f(0.2126 * r + 0.7152 * g + 0.0722 * b), Z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+    return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+  };
+  const dE = (a: string, b: string) => Math.hypot(...lab(a).map((v, i) => v - lab(b)[i]));
+  const lightness = (h: string) => (Math.max(...rgb(h)) + Math.min(...rgb(h))) / 2 / 255;
+
+  const NEW = { W: REPORT_COLORS.working, S: REPORT_COLORS.standby, DOL: REPORT_COLORS.dol, VFD: REPORT_COLORS.vfd, Feeder: REPORT_COLORS.feeder };
+  const OLD = [REPORT_COLORS.header, REPORT_COLORS.within, REPORT_COLORS.over, REPORT_COLORS.incomer, REPORT_COLORS.coupler];
+
+  it("W, S, DOL, VFD and Feeder each get their own pastel, clearly different from the existing shades and from each other", () => {
+    const colours = Object.values(NEW);
+    expect(new Set(colours).size).toBe(5);
+    for (const c of colours) {
+      expect(OLD).not.toContain(c);
+      expect(lightness(c), c).toBeGreaterThanOrEqual(0.8); // pastel = light
+      for (const o of OLD) expect(dE(c, o), `${c} vs ${o}`).toBeGreaterThan(18);
+    }
+    for (let i = 0; i < colours.length; i++) for (let j = i + 1; j < colours.length; j++) expect(dE(colours[i], colours[j]), `${colours[i]} vs ${colours[j]}`).toBeGreaterThan(18);
+  });
+
+  it("kindColor maps the values (case and space insensitive) and nothing else", () => {
+    expect(kindColor("W")).toBe(NEW.W);
+    expect(kindColor(" s ")).toBe(NEW.S);
+    expect(kindColor("DOL")).toBe(NEW.DOL);
+    expect(kindColor("DOL motor")).toBe(NEW.DOL);
+    expect(kindColor("vfd")).toBe(NEW.VFD);
+    expect(kindColor("VFD motor")).toBe(NEW.VFD);
+    expect(kindColor("Feeder")).toBe(NEW.Feeder);
+    expect(kindColor("Crusher")).toBeNull();
+    expect(kindColor("")).toBeNull();
+  });
+
+  it("W/S and Treated-as cells are shaded on the Loads sheet, the bus layout and the original sheet", async () => {
+    const { sheets, result, raw } = await build();
+    const bgOf = (kind: string) => NEW[kind as keyof typeof NEW];
+    // Loads sheet: W/S column and Treated as column
+    const loads = sheets.find((x) => x.sheet === "Loads")!.data;
+    const header = loads[0].map((c) => String(val(c)));
+    const ws = header.indexOf("W/S"), treated = header.indexOf("Treated as");
+    const body = loads.slice(1, -1);
+    expect(body).toHaveLength(result.loads.length);
+    body.forEach((r, i) => {
+      const l = result.loads[i];
+      expect(st(r[ws])!.backgroundColor, `W/S row ${l.rowNumber}`).toBe(bgOf(l.status!));
+      expect(st(r[ws])!.align).toBe("center");
+      const kind = l.kind === "feeder" ? "Feeder" : l.type;
+      expect(st(r[treated])!.backgroundColor, `treated as row ${l.rowNumber}`).toBe(bgOf(kind));
+    });
+    expect(new Set(body.map((r) => st(r[ws])!.backgroundColor))).toEqual(new Set([NEW.W, NEW.S])); // both shades occur
+    expect(new Set(body.map((r) => st(r[treated])!.backgroundColor))).toEqual(new Set([NEW.DOL, NEW.VFD, NEW.Feeder]));
+    // bus layout: outgoing-load rows carry the same shading
+    const three = sheets.find((x) => x.sheet === "3 Transformers")!.data;
+    const outgoing = three.filter((r) => val(r[0]) === "Outgoing load");
+    expect(outgoing.length).toBe(result.loads.length);
+    for (const r of outgoing) {
+      expect(st(r[4])!.backgroundColor).toBe(NEW[String(val(r[4])) as "W" | "S"]); // W/S column
+      expect(st(r[6])!.backgroundColor).toBeDefined(); // treated as
+    }
+    // legend row lists the five shades
+    const legend = three.find((r) => val(r[0]) === "Incomer" && val(r[1]) === "Bus coupler")!;
+    expect(legend.map((c) => st(c)?.backgroundColor)).toEqual([REPORT_COLORS.incomer, REPORT_COLORS.coupler, undefined, NEW.W, NEW.S, NEW.DOL, NEW.VFD, NEW.Feeder]);
+    // original sheet: the W / S / DOL / VFD / Feeder cells are shaded, everything else is not
+    const orig = sheets.find((x) => x.sheet === "Original load list")!.data;
+    let shaded = 0;
+    orig.slice(1).forEach((r, ri) => r.forEach((c) => {
+      const v = val(c);
+      const want = typeof v === "string" ? kindColor(v) : null;
+      expect(st(c)?.backgroundColor ?? null, `original ${ri + 2}`).toBe(want);
+      if (want) shaded++;
+    }));
+    expect(shaded).toBe((raw.length - 1) * 2); // every data row has a W/S and a type value
+  });
+
+  /** Walk every numeric cell with the header (table) or label (key/value block) that describes it. */
+  const numericCells = (sheet: { data: ReportCell[][] }) => {
+    const out: { value: number; format?: string; align?: string; head: string }[] = [];
+    let heads: string[] | null = null;
+    for (const row of sheet.data) {
+      const orange = row.length > 0 && row.every((c) => st(c)?.backgroundColor === REPORT_COLORS.header);
+      if (orange) {
+        const texts = row.map((c) => String(val(c) ?? ""));
+        heads = texts.filter((t) => t !== "").length >= 3 ? texts : null; // 2-cell orange rows are block titles
+        continue;
+      }
+      row.forEach((c, j) => {
+        const sc = st(c);
+        if (sc && typeof sc.value === "number") out.push({ value: sc.value, format: sc.format, align: sc.align, head: heads ? (heads[j] ?? "") : `${val(row[0])}` });
+      });
+    }
+    return out;
+  };
+
+  it("only percentages have a decimal place; every other number is a whole number (power factor keeps two decimals)", async () => {
+    const { sheets } = await build();
+    let pctCells = 0, intCells = 0, pfCells = 0;
+    for (const sh of sheets.filter((x) => x.sheet !== "Original load list")) {
+      for (const c of numericCells(sh)) {
+        const isPct = /%/.test(c.head);
+        const isPf = /power factor/i.test(c.head);
+        if (isPct) { expect(c.format, `${sh.sheet}: ${c.head}`).toBe("0.0"); pctCells++; }
+        else if (isPf) { expect(c.format, `${sh.sheet}: ${c.head}`).toBe("0.00"); pfCells++; }
+        else {
+          // whole-number display: "#,##0", or no format at all for plain integers (counts, ratings, row numbers)
+          if (c.format === undefined) expect(Number.isInteger(c.value), `${sh.sheet}: ${c.head} = ${c.value}`).toBe(true);
+          else expect(c.format, `${sh.sheet}: ${c.head}`).toBe("#,##0");
+          intCells++;
+        }
+      }
+    }
+    expect(pctCells).toBeGreaterThan(20);
+    expect(intCells).toBeGreaterThan(100);
+    expect(pfCells).toBeGreaterThan(5);
+  });
+
+  it("the display is rounded but the values are not (kVA keeps its decimals underneath)", async () => {
+    const { sheets, result } = await build();
+    const summary = numericCells(sheets[0]);
+    const total = summary.find((c) => c.head === "Total kVA used for sizing")!;
+    expect(total.format).toBe("#,##0");
+    expect(total.value).toBeCloseTo(result.totalKva, 9);
+    expect(Number.isInteger(total.value)).toBe(false);
+  });
+
+  it("all numbers and percentages, and the W/S columns, are centred; text is left-aligned", async () => {
+    const { sheets } = await build();
+    let numbers = 0;
+    for (const sh of sheets) {
+      for (const row of sh.data) {
+        row.forEach((c) => {
+          const sc = st(c);
+          if (!sc) return;
+          if (typeof sc.value === "number") { expect(sc.align, `${sh.sheet}: ${sc.value}`).toBe("center"); numbers++; }
+        });
+      }
+    }
+    expect(numbers).toBeGreaterThan(300);
+    // W/S column on Loads (header "W/S") is centred, including blank cells
+    const loads = sheets.find((x) => x.sheet === "Loads")!.data;
+    const ws = loads[0].map((c) => String(val(c))).indexOf("W/S");
+    for (const r of loads.slice(1, -1)) expect(st(r[ws])!.align).toBe("center");
+    // descriptions stay left-aligned
+    const desc = loads[0].map((c) => String(val(c))).indexOf("Description");
+    for (const r of loads.slice(1, -1)) expect(st(r[desc])!.align).toBe("left");
+  });
+
+  it("the real .xlsx file carries the pastel fills, the number formats and centring, and no author metadata", async () => {
+    const { result, o } = await build();
+    const blob = await buildReportBlob(result, o);
+    const parts = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    const styles = strFromU8(parts["xl/styles.xml"]);
+    for (const c of [...Object.values(NEW), ...OLD]) expect(styles.toUpperCase(), c).toContain(`FF${c.slice(1).toUpperCase()}`);
+    const formats = [...styles.matchAll(/formatCode="([^"]*)"/g)].map((m) => m[1]);
+    expect(formats).toEqual(expect.arrayContaining(["0.0", "#,##0", "0.00"]));
+    expect(formats).not.toContain("#,##0.0");
+    expect(styles).toContain('horizontal="center"');
+    // no document properties at all (no creator / last modified by), and no author-like text anywhere
+    expect(Object.keys(parts).filter((n) => n.startsWith("docProps"))).toEqual([]);
+    for (const [name, bytes] of Object.entries(parts)) {
+      expect(strFromU8(bytes), name).not.toMatch(/dc:creator|lastModifiedBy|Puneet|Narayan/i);
+    }
   });
 });
