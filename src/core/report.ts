@@ -8,6 +8,12 @@ export const REPORT_COLORS = {
   over: "#FFC7CE", // light red
   incomer: "#80DEEA", // cyan
   coupler: "#FFF9C4", // light yellow
+  // Pastels for the load kinds, each clearly different from the shades above and from each other.
+  working: "#DEB1FB", // W: lavender
+  standby: "#FBB1DE", // S: pink
+  dol: "#BACEF3", // DOL: periwinkle blue
+  vfd: "#CBFBB1", // VFD: lime
+  feeder: "#D8D4CA", // Feeder: sand
   border: "#BFBFBF",
 } as const;
 
@@ -62,17 +68,45 @@ const head = (v: string): ReportCell => ({
   value: v, fontWeight: "bold", backgroundColor: REPORT_COLORS.header, align: "center", alignVertical: "center", ...BORDER,
 });
 const heads = (...h: string[]): Row => h.map(head);
-/** Plain table cell. */
-const cell = (v: string | number, align: "left" | "right" | "center" = typeof v === "number" ? "right" : "left"): ReportCell =>
-  ({ value: v, align, ...BORDER });
-/** Number cell with a display format. */
-const n = (v: number, format = "#,##0.0"): ReportCell => ({ value: v, format, align: "right", ...BORDER });
+/** Plain table cell: numbers are centred, text is left-aligned. */
+const cell = (v: string | number, align: "left" | "right" | "center" = typeof v === "number" ? "center" : "left"): ReportCell =>
+  typeof v === "number" ? { value: v, format: "#,##0", align, ...BORDER } : { value: v, align, ...BORDER };
+/**
+ * Number cell, centred. Whole numbers are shown without decimals ("#,##0"); only percentages
+ * (see `pct`, `limited`) have one decimal. Power factor is a ratio below 1 and keeps two decimals ("0.00").
+ */
+const n = (v: number, format = "#,##0"): ReportCell => ({ value: v, format, align: "center", ...BORDER });
+/** A percentage, centred, one decimal. */
+const pct = (v: number): ReportCell => n(v, "0.0");
 /** Table cell shaded light green when within its limit, light red when over. */
 const fill = (within: boolean) => (within ? REPORT_COLORS.within : REPORT_COLORS.over);
-const limited = (v: number, limitPct: number, format = "#,##0.0"): ReportCell =>
-  ({ value: v, format, align: "right", backgroundColor: fill(v <= limitPct + 1e-9), ...BORDER });
+const limited = (v: number, limitPct: number): ReportCell =>
+  ({ value: v, format: "0.0", align: "center", backgroundColor: fill(v <= limitPct + 1e-9), ...BORDER });
 const verdict = (text: string, within: boolean): ReportCell =>
   ({ value: text, align: "center", backgroundColor: fill(within), ...BORDER });
+
+/** Pastel shade for a W / S / DOL / VFD / Feeder value (null for anything else). */
+export function kindColor(value: string): string | null {
+  switch (value.trim().toLowerCase()) {
+    case "w": return REPORT_COLORS.working;
+    case "s": return REPORT_COLORS.standby;
+    case "dol": case "dol motor": return REPORT_COLORS.dol;
+    case "vfd": case "vfd motor": return REPORT_COLORS.vfd;
+    case "feeder": return REPORT_COLORS.feeder;
+    default: return null;
+  }
+}
+/** W / S cell: centred and shaded. */
+const statusCell = (v: string): ReportCell => {
+  const bg = kindColor(v);
+  return { value: v, align: "center", ...(bg ? { backgroundColor: bg } : {}), ...BORDER };
+};
+/** "Treated as" cell (DOL motor / VFD motor / Feeder), shaded by kind. */
+const treatedAs = (l: { kind: string; type: string }): ReportCell => {
+  const text = l.kind === "feeder" ? "Feeder" : `${l.type} motor`;
+  const bg = kindColor(text);
+  return { value: text, align: "left", ...(bg ? { backgroundColor: bg } : {}), ...BORDER };
+};
 
 /** A short banner (green when within limits, red otherwise) merged across `span` columns. */
 const banner = (text: string, within: boolean, span = 5): Row => [
@@ -119,8 +153,8 @@ function loadHeaders(includePower: boolean, withSection = false): Row {
 function loadCells(l: SizingResult["loads"][number], includePower: boolean, section?: string): Row {
   return [
     ...(section ? [cell(section)] : []),
-    cell(l.rowNumber, "center"), cell(l.description), cell(l.status ?? "", "center"), cell(l.group ?? ""),
-    cell(l.kind === "feeder" ? "Feeder" : `${l.type} motor`),
+    cell(l.rowNumber), cell(l.description), statusCell(l.status ?? ""), cell(l.group ?? ""),
+    treatedAs(l),
     l.ratedKw === undefined ? cell("") : n(l.ratedKw),
     ...(includePower ? [n(l.kw), n(l.kvar), n(l.powerFactor, "0.00")] : []),
     n(l.kva), cell(l.basis),
@@ -142,18 +176,18 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     ...(o.fileName ? [kv("Source file", cell(o.fileName))] : []),
     [],
     blockHeader("Assumptions"),
-    kv("Motor efficiency (%)", n(op.efficiency * 100, "0.0")),
+    kv("Motor efficiency (%)", pct(op.efficiency * 100)),
     kv("Power factor, DOL motors", n(op.powerFactor.DOL, "0.00")),
     kv("Power factor, VFD motors", n(op.powerFactor.VFD, "0.00")),
     kv("Power factor, feeders", n(op.powerFactor.FEEDER, "0.00")),
-    kv("Max transformer loading, normal running (%)", n(normalPct, "0")),
-    kv("Max transformer loading, one transformer out (%)", n(contPct, "0")),
+    kv("Max transformer loading, normal running (%)", pct(normalPct)),
+    kv("Max transformer loading, one transformer out (%)", pct(contPct)),
     kv("Ratings considered (kVA)", cell([...op.ratingsKva].sort((x, y) => x - y).join(", "))),
     kv("Total kVA basis", cell("Arithmetic sum of each load's kVA")),
     kv("Load factor", cell("All loads at 100 % (working W and standby S)")),
     [],
     blockHeader("Total load"),
-    kv("Loads included", cell(r.loads.length, "left")),
+    kv("Loads included", cell(r.loads.length)),
     kv("Working (W) / standby (S)", cell(`${r.loads.filter((l) => l.status === "W").length} W / ${r.loads.filter((l) => l.status === "S").length} S`)),
     kv("Total kVA used for sizing", n(r.totalKva)),
     ...(o.includePower
@@ -169,12 +203,12 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
       ? kv("Recommended", verdict(`${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (sets of ${rec.layout.join(" + ")})` : ""}`, true))
       : kv("Recommended", verdict(r.blockers.length > 0 ? "None: a load is too big for any transformer section" : "No configuration fits the ratings considered", false)),
     ...r.blockers.map((m): Row => [cell("Cannot be placed"), cell(m)]),
-    ...(rec ? [kv("Incomers", cell(rec.count, "left")), kv("Bus couplers", cell(rec.count - rec.layout.length, "left"))] : []),
+    ...(rec ? [kv("Incomers", cell(rec.count)), kv("Bus couplers", cell(rec.count - rec.layout.length))] : []),
     [],
     [label("Numbers of transformers tried")],
     heads("Transformers", "Sets", "Rating (kVA)", "Fits", "Max load (kVA)", "Average normal loading (%)", "One out loading (%)"),
     ...r.combos.map((c): Row => [
-      cell(c.count, "center"), cell(c.layout.join(" + "), "center"), cell(c.chosen.ratingKva, "center"), verdict(c.fits ? "Yes" : "No", c.fits),
+      cell(c.count), cell(c.layout.join(" + "), "center"), cell(c.chosen.ratingKva), verdict(c.fits ? "Yes" : "No", c.fits),
       n(c.chosen.maxLoadKva), limited(c.chosen.normalPct, normalPct), limited(c.chosen.contingencyPct, contPct),
     ]),
   ];
@@ -199,7 +233,11 @@ function originalSheet(raw: NonNullable<ReportOptions["originalSheet"]>): Report
         if (ri < headerIdx) return null; // blank rows above the header stay empty
         return ri === headerIdx ? head("") : { value: "", ...BORDER };
       }
-      return ri === headerIdx ? head(String(c)) : { value: c, align: typeof c === "number" ? "right" : "left", ...BORDER };
+      if (ri === headerIdx) return head(String(c));
+      if (typeof c === "number") return { value: c, align: "center", ...BORDER }; // as uploaded: no number format applied
+      const bg = typeof c === "string" ? kindColor(c) : null;
+      const isStatus = typeof c === "string" && ["w", "s"].includes(c.trim().toLowerCase());
+      return { value: c, align: isStatus ? "center" : "left", ...(bg ? { backgroundColor: bg } : {}), ...BORDER };
     }),
   );
   return {
@@ -295,7 +333,7 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
     [label("Ratings considered")],
     heads("Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result"),
     ...c.candidates.map((x): Row => [
-      cell(x.ratingKva, "center"), cell(x.installedKva, "center"), limited(x.normalPct, normalPct), limited(x.contingencyPct, contPct),
+      cell(x.ratingKva), cell(x.installedKva), limited(x.normalPct, normalPct), limited(x.contingencyPct, contPct),
       verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits),
     ]),
     [],
@@ -304,7 +342,7 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
           [label("Load per set")],
           heads("Set", "Transformers", "Load (kVA)", "Limit (kVA)", "Result"),
           ...c.sets.map((s): Row => [
-            cell(s.index, "center"), cell(s.size, "center"), n(s.kva), n(s.capacityKva), verdict(s.kva <= s.capacityKva + 1e-9 ? "Within limit" : "Over limit", s.kva <= s.capacityKva + 1e-9),
+            cell(s.index), cell(s.size), n(s.kva), n(s.capacityKva), verdict(s.kva <= s.capacityKva + 1e-9 ? "Within limit" : "Over limit", s.kva <= s.capacityKva + 1e-9),
           ]),
           [],
         ] as Row[])
@@ -313,7 +351,7 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
       [label(multi ? `Set ${set.index}: ${set.size} transformers – load distribution (normal running)` : "Load distribution (normal running)")],
       heads("Transformer", "Loads", ...(o.includePower ? ["kW (input)", "kvar"] : []), "kVA", "Loading (%)", `Within ${normalPct} %`),
       ...set.sections.map((s): Row => [
-        cell(s.name), cell(s.loads.length, "center"), ...(o.includePower ? [n(s.kw), n(s.kvar)] : []), n(s.kva),
+        cell(s.name), cell(s.loads.length), ...(o.includePower ? [n(s.kw), n(s.kvar)] : []), n(s.kva),
         limited(s.loadingPct, normalPct), verdict(s.withinNormalLimit ? "Yes" : "No", s.withinNormalLimit),
       ]),
       [],
@@ -330,6 +368,10 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
       { value: "Incomer", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.incomer, ...BORDER },
       { value: "Bus coupler", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.coupler, ...BORDER },
       { value: "Outgoing load", align: "center", ...BORDER },
+      statusCell("W"), statusCell("S"),
+      { value: "DOL", align: "center", backgroundColor: REPORT_COLORS.dol, ...BORDER },
+      { value: "VFD", align: "center", backgroundColor: REPORT_COLORS.vfd, ...BORDER },
+      { value: "Feeder", align: "center", backgroundColor: REPORT_COLORS.feeder, ...BORDER },
     ],
     [],
     ...c.sets.flatMap((set): Row[] => [
@@ -346,7 +388,7 @@ function issuesSheet(r: SizingResult): ReportSheet {
   const kind = { error: "Error (not included)", excluded: "Excluded", warning: "Warning" } as const;
   const data: Row[] = [
     heads("Row", "Description", "Type", "Message"),
-    ...r.issues.map((i): Row => [cell(i.rowNumber, "center"), cell(i.description), cell(kind[i.severity]), cell(i.message)]),
+    ...r.issues.map((i): Row => [cell(i.rowNumber), cell(i.description), cell(kind[i.severity]), cell(i.message)]),
   ];
   return { sheet: "Issues", data, columns: autoColumns(data), stickyRowsCount: 1 };
 }
