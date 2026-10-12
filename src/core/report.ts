@@ -1,11 +1,13 @@
 import writeExcelFile from "write-excel-file/universal";
-import { displayCombos, type ComboResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
+import { displayCombos, type ComboResult, type SetResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
 
 /** Colours used in the Excel report. */
 export const REPORT_COLORS = {
   header: "#FFE0B2", // light orange
   within: "#C6EFCE", // light green
   over: "#FFC7CE", // light red
+  incomer: "#80DEEA", // cyan
+  coupler: "#FFF9C4", // light yellow
   border: "#BFBFBF",
 } as const;
 
@@ -218,6 +220,62 @@ function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
   return { sheet: "Loads", data: rows, columns: autoColumns(rows), stickyRowsCount: 1 };
 }
 
+/** Re-colour every cell of a row (keeps each cell's own style). */
+function tint(row: Row, color: string): Row {
+  return row.map((c): ReportCell => {
+    if (c !== null && typeof c === "object") return { ...c, backgroundColor: color };
+    return { value: c ?? "", backgroundColor: color, ...BORDER };
+  });
+}
+
+function layoutHeaders(includePower: boolean): Row {
+  return heads(
+    "Element", "Name", "Row", "Description", "W/S", "Duty/standby group", "Treated as", "Rated kW (motor)",
+    ...(includePower ? ["kW (input)", "kvar", "Power factor"] : []),
+    "kVA", "Basis",
+  );
+}
+
+/**
+ * The board of one set in order along the bus, as rows: incomers (cyan) and bus couplers (light yellow)
+ * with the outgoing loads between them. Each section's loads sit next to its incomer and a coupler:
+ *   set of 2:  Incomer T1 | loads T1 | Bus coupler BC1 | loads T2 | Incomer T2
+ *   set of 3:  Incomer T1 | loads T1 | BC1 | Incomer T2 | loads T2 | BC2 | loads T3 | Incomer T3
+ */
+export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions): Row[] {
+  const multi = c.sets.length > 1;
+  const R = c.chosen.ratingKva;
+  const k = set.sections.length;
+  const pf = (kw: number, kvar: number) => (kw === 0 && kvar === 0 ? 0 : kw / Math.hypot(kw, kvar));
+  const empty = (): ReportCell => cell("");
+  const incomer = (i: number): Row => {
+    const s = set.sections[i];
+    return tint([
+      cell("Incomer"), cell(s.name), empty(), cell(`Incomer from ${s.name}: ${R} kVA transformer, ${o.transformerLabel}`), empty(), empty(), empty(), empty(),
+      ...(o.includePower ? [n(s.kw), n(s.kvar), n(pf(s.kw, s.kvar), "0.00")] : []),
+      n(s.kva), cell(`Section load: ${s.loadingPct.toFixed(1)} % of ${R} kVA (normal limit ${o.options.normalLimit * 100} %)`),
+    ], REPORT_COLORS.incomer);
+  };
+  const coupler = (i: number): Row => {
+    const a = set.sections[i].name;
+    const b = set.sections[i + 1].name;
+    return tint([
+      cell("Bus coupler"), cell(multi ? `S${set.index}-BC${i + 1}` : `BC${i + 1}`), empty(), cell(`Bus coupler between ${a} and ${b}`), empty(), empty(), empty(), empty(),
+      ...(o.includePower ? [empty(), empty(), empty()] : []),
+      empty(), cell(`Ties bus sections ${a} and ${b}`),
+    ], REPORT_COLORS.coupler);
+  };
+  const loads = (i: number): Row[] =>
+    set.sections[i].loads.map((l): Row => [cell("Outgoing load"), ...loadCells(l, o.includePower, set.sections[i].name)]);
+
+  const rows: Row[] = [];
+  for (let i = 0; i < k; i++) {
+    if (i < k - 1) rows.push(incomer(i), ...loads(i), coupler(i));
+    else rows.push(...loads(i), incomer(i)); // last section mirrored so its loads sit between a coupler and its incomer
+  }
+  return rows;
+}
+
 function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
   const op = o.options;
   const normalPct = op.normalLimit * 100;
@@ -266,9 +324,19 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
       [],
     ]),
     ...(c.notes.length ? ([[label("Notes")], ...c.notes.map((t): Row => [t]), []] as Row[]) : []),
-    [label("Loads by transformer")],
-    loadHeaders(o.includePower, true),
-    ...c.sections.flatMap((s) => s.loads.map((l) => loadCells(l, o.includePower, s.name))),
+    [label(multi ? "Bus layout per set: incomers, outgoing loads and bus couplers" : "Bus layout: incomers, outgoing loads and bus couplers")],
+    [
+      { value: "Incomer", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.incomer, ...BORDER },
+      { value: "Bus coupler", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.coupler, ...BORDER },
+      { value: "Outgoing load", align: "center", ...BORDER },
+    ],
+    [],
+    ...c.sets.flatMap((set): Row[] => [
+      ...(multi ? ([[label(`Set ${set.index}`)]] as Row[]) : []),
+      layoutHeaders(o.includePower),
+      ...busLayoutRows(set, c, o),
+      [],
+    ]),
   ];
   return { sheet: `${c.count} Transformers`, data, columns: autoColumns(data) };
 }

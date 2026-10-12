@@ -59,12 +59,10 @@ describe("Excel report", () => {
     const { result, sheets } = await report(true);
     for (const n of [2, 3]) {
       const rows = sheets[`${n} Transformers`];
-      const start = rows.findIndex((r) => r[0] === "Loads by transformer");
-      const body = rows.slice(start + 2);
-      expect(body).toHaveLength(result.loads.length);
-      const names = new Set(body.map((r) => r[0]));
-      expect([...names].sort()).toEqual(Array.from({ length: n }, (_, i) => `T${i + 1}`));
-      expect(body.map((r) => r[1]).sort()).toEqual(result.loads.map((l) => l.rowNumber).sort());
+      const outgoing = rows.filter((r) => r[0] === "Outgoing load");
+      expect(outgoing).toHaveLength(result.loads.length);
+      expect([...new Set(outgoing.map((r) => r[1]))].sort()).toEqual(Array.from({ length: n }, (_, i) => `T${i + 1}`));
+      expect(outgoing.map((r) => r[2]).sort()).toEqual(result.loads.map((l) => l.rowNumber).sort());
     }
   });
 
@@ -130,10 +128,9 @@ describe("Excel report with sets of transformers", () => {
     expect(String(five[3][0])).toContain("5 incomers, 3 bus couplers, in 2 independent sets (3 + 2)");
     expect(five.some((r) => String(r[0]).startsWith("Set 1: 3 transformers"))).toBe(true);
     expect(five.some((r) => String(r[0]).startsWith("Set 2: 2 transformers"))).toBe(true);
-    const start = five.findIndex((r) => r[0] === "Loads by transformer");
-    const body = five.slice(start + 2);
+    const body = five.filter((r) => r[0] === "Outgoing load");
     expect(body).toHaveLength(60);
-    expect([...new Set(body.map((r) => r[0]))].sort()).toEqual(["S1-T1", "S1-T2", "S1-T3", "S2-T1", "S2-T2"]);
+    expect([...new Set(body.map((r) => r[1]))].sort()).toEqual(["S1-T1", "S1-T2", "S1-T3", "S2-T1", "S2-T2"]);
   });
 });
 
@@ -194,7 +191,7 @@ describe("Excel report formatting", () => {
       rows.find((r) => val(r[0]) === "Rating (kVA)"),
       rows.find((r) => val(r[0]) === "Transformer" && val(r[1]) === "Loads"),
       rows.find((r) => val(r[0]) === "Transformer out"),
-      rows.find((r) => val(r[0]) === "Transformer" && val(r[1]) === "Row"), // "Loads by transformer" table
+      rows.find((r) => val(r[0]) === "Element" && val(r[1]) === "Name"), // bus layout table
     ];
     for (const row of headerRows) {
       expect(row).toBeDefined();
@@ -263,5 +260,141 @@ describe("Excel report formatting", () => {
     const oo = two[two.findIndex((r) => val(r[0]) === "Transformer out") + 1];
     expect(val(oo[4])).toBe("OK");
     expect(bg(oo[4])).toBe(REPORT_COLORS.within);
+  });
+});
+
+describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light yellow)", () => {
+  const bg = (c: ReportCell) => (c && typeof c === "object" ? c.backgroundColor : undefined);
+  const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
+  const sheetFor = async (opts = DEFAULT_OPTIONS, includePower = true) => {
+    const raw = await readSheet(buf);
+    const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
+    const sheets = buildReportSheets(result, { transformerLabel: "6600 / 433 V", options: opts, includePower });
+    return { result, sheets: Object.fromEntries(sheets.map((x) => [x.sheet, x])) };
+  };
+  /** The element column of the layout tables, in order, with the row cells. */
+  const layout = (rows: ReportCell[][]) => {
+    const heads = rows.map((r, i) => (val(r[0]) === "Element" && val(r[1]) === "Name" ? i : -1)).filter((i) => i >= 0);
+    return heads.map((h) => {
+      const body: ReportCell[][] = [];
+      for (let i = h + 1; i < rows.length && rows[i].length > 0; i++) body.push(rows[i]);
+      return body;
+    });
+  };
+
+  it("2 transformers: Incomer | loads | Bus coupler | loads | Incomer", async () => {
+    const { result, sheets } = await sheetFor();
+    const [table] = layout(sheets["2 Transformers"].data);
+    const kinds = table.map((r) => val(r[0]));
+    const nLoads = result.combos[0].sections.map((s) => s.loads.length);
+    expect(kinds).toEqual([
+      "Incomer", ...Array(nLoads[0]).fill("Outgoing load"), "Bus coupler", ...Array(nLoads[1]).fill("Outgoing load"), "Incomer",
+    ]);
+    expect(table.filter((r) => val(r[0]) === "Incomer").map((r) => val(r[1]))).toEqual(["T1", "T2"]);
+    expect(table.filter((r) => val(r[0]) === "Bus coupler").map((r) => val(r[1]))).toEqual(["BC1"]);
+  });
+
+  it("3 transformers: Inc T1 | loads | BC1 | Inc T2 | loads | BC2 | loads | Inc T3 (one coupler between neighbours)", async () => {
+    const { result, sheets } = await sheetFor();
+    const [table] = layout(sheets["3 Transformers"].data);
+    const compact: string[] = [];
+    for (const r of table) {
+      const k = String(val(r[0]));
+      if (k === "Outgoing load") { if (compact[compact.length - 1] !== "loads") compact.push("loads"); }
+      else compact.push(`${k} ${val(r[1])}`);
+    }
+    expect(compact).toEqual(["Incomer T1", "loads", "Bus coupler BC1", "Incomer T2", "loads", "Bus coupler BC2", "loads", "Incomer T3"]);
+    expect(table.filter((r) => val(r[0]) === "Outgoing load")).toHaveLength(result.loads.length);
+  });
+
+  it("incomer rows are cyan end to end, bus coupler rows light yellow, outgoing loads are not coloured", async () => {
+    expect(REPORT_COLORS.incomer).toBe("#80DEEA");
+    expect(REPORT_COLORS.coupler).toBe("#FFF9C4");
+    const { sheets } = await sheetFor();
+    for (const name of ["2 Transformers", "3 Transformers"]) {
+      const [table] = layout(sheets[name].data);
+      for (const r of table) {
+        const kind = val(r[0]);
+        const colours = new Set(r.map(bg));
+        if (kind === "Incomer") expect([...colours]).toEqual([REPORT_COLORS.incomer]);
+        else if (kind === "Bus coupler") expect([...colours]).toEqual([REPORT_COLORS.coupler]);
+        else expect(colours.has(REPORT_COLORS.incomer) || colours.has(REPORT_COLORS.coupler)).toBe(false);
+      }
+    }
+  });
+
+  it("every run of outgoing loads lies between an incomer and a bus coupler", async () => {
+    const { sheets } = await sheetFor();
+    for (const name of ["2 Transformers", "3 Transformers"]) {
+      const kinds = layout(sheets[name].data)[0].map((r) => String(val(r[0])));
+      let i = 0;
+      while (i < kinds.length) {
+        if (kinds[i] !== "Outgoing load") { i++; continue; }
+        let j = i;
+        while (j < kinds.length && kinds[j] === "Outgoing load") j++;
+        const neighbours = [kinds[i - 1], kinds[j]].sort();
+        expect(neighbours, `${name} loads ${i}..${j}`).toEqual(["Bus coupler", "Incomer"]);
+        i = j;
+      }
+    }
+  });
+
+  it("an incomer row carries its section's load; the section's loads add up to it", async () => {
+    const { sheets } = await sheetFor();
+    const [table] = layout(sheets["3 Transformers"].data);
+    const kvaCol = (table[0].length - 2); // kVA is the second-last column
+    let section = "";
+    const sums: Record<string, number> = {};
+    const incomerKva: Record<string, number> = {};
+    for (const r of table) {
+      const kind = val(r[0]);
+      if (kind === "Outgoing load") sums[String(val(r[1]))] = (sums[String(val(r[1]))] ?? 0) + Number(val(r[kvaCol]));
+      if (kind === "Incomer") { section = String(val(r[1])); incomerKva[section] = Number(val(r[kvaCol])); }
+    }
+    for (const t of ["T1", "T2", "T3"]) expect(sums[t]).toBeCloseTo(incomerKva[t], 6);
+  });
+
+  it("rows line up with the header with and without the kW / kvar / power-factor columns", async () => {
+    for (const includePower of [true, false]) {
+      const { sheets } = await sheetFor(DEFAULT_OPTIONS, includePower);
+      const rows = sheets["3 Transformers"].data;
+      const hIdx = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
+      const width = rows[hIdx].length;
+      expect(width).toBe(includePower ? 13 : 10); // 8 base columns + 3 power columns + kVA + Basis
+      for (const r of layout(rows)[0]) expect(r).toHaveLength(width);
+    }
+  });
+
+  it("several sets: one table per set; couplers only inside a set (named S1-BC1 ...), none between sets", async () => {
+    const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
+      rowNumber: i + 2, description: `F${i}`, type: "Feeder", voltageV: 433, status: "W" as const,
+      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 433),
+    }));
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [5] };
+    const result = sizeTransformers(rows, 433, opts);
+    const sheet = buildReportSheets(result, { transformerLabel: "x", options: opts, includePower: false }).find((x) => x.sheet === "5 Transformers")!;
+    const tables = layout(sheet.data);
+    expect(tables).toHaveLength(2); // set of 3 and set of 2
+    const names = (t: ReportCell[][], kind: string) => t.filter((r) => val(r[0]) === kind).map((r) => val(r[1]));
+    expect(names(tables[0], "Incomer")).toEqual(["S1-T1", "S1-T2", "S1-T3"]);
+    expect(names(tables[0], "Bus coupler")).toEqual(["S1-BC1", "S1-BC2"]);
+    expect(names(tables[1], "Incomer")).toEqual(["S2-T1", "S2-T2"]);
+    expect(names(tables[1], "Bus coupler")).toEqual(["S2-BC1"]);
+    // 5 incomers, 3 couplers in total = what the summary says
+    const total = (k: string) => tables.reduce((a, t) => a + t.filter((r) => val(r[0]) === k).length, 0);
+    expect([total("Incomer"), total("Bus coupler")]).toEqual([5, 3]);
+    expect(total("Outgoing load")).toBe(60);
+  });
+
+  it("the cyan / yellow / orange / green colours are in the real .xlsx, with the legend row", async () => {
+    const raw = await readSheet(buf);
+    const result = sizeTransformers(parseLoadSheet(raw).rows, 433);
+    const blob = await buildReportBlob(result, { transformerLabel: "x", options: DEFAULT_OPTIONS, includePower: true });
+    const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((x) => [x.sheet, x.data]));
+    const rows = sheets["3 Transformers"];
+    const legend = rows.findIndex((r) => r[0] === "Incomer" && r[1] === "Bus coupler" && r[2] === "Outgoing load");
+    expect(legend).toBeGreaterThan(0);
+    expect(rows.filter((r) => r[0] === "Incomer")).toHaveLength(4); // legend cell + 3 incomers
+    expect(rows.filter((r) => r[0] === "Bus coupler")).toHaveLength(2); // 2 couplers (the legend has it in column 2)
   });
 });
