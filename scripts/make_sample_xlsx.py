@@ -3,24 +3,25 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
-HEADERS = ["Description", "Type (DOL/VFD/Feeder)", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)"]
+HEADERS = ["Description", "Type (DOL/VFD/Feeder)", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)", "Duty/standby group"]
 ROWS = [
-    # description, type, amps, kW, voltage
-    ("Boiler feed water pump", "DOL", None, 185, 433),
-    ("Cooling water pump A", "DOL", None, 160, 433),
-    ("Cooling water pump B (standby)", "DOL", None, 160, 433),
-    ("ID fan", "VFD", None, 250, 433),
-    ("FD fan", "VFD", None, 200, 433),
-    ("Air compressor", "DOL", None, 132, 433),
-    ("Conveyor 1", "DOL", None, 90, 433),
-    ("Conveyor 2", "VFD", None, 75, 433),
-    ("Crusher", "DOL", None, 315, 433),
-    ("Dosing pump (amps only)", "DOL", 180, None, 433),
-    ("Booster fan (amps only)", "VFD", 120, None, 433),
-    ("Lighting & small power DB", "Feeder", 250, None, 433),
-    ("MCC-2 incomer", "Feeder", 800, None, 433),
-    ("Grinding mill", "DOL", None, 450, 690),
-    ("Slurry pump", "VFD", None, 355, 690),
+    # description, type, amps, kW, voltage, duty/standby group (optional)
+    ("Boiler feed water pump A (duty)", "DOL", None, 185, 433, "BFW"),
+    ("Boiler feed water pump B (standby)", "DOL", None, 185, 433, "BFW"),
+    ("Cooling water pump A (duty)", "DOL", None, 160, 433, "CWP"),
+    ("Cooling water pump B (standby)", "DOL", None, 160, 433, "CWP"),
+    ("ID fan", "VFD", None, 250, 433, None),
+    ("FD fan", "VFD", None, 200, 433, None),
+    ("Air compressor", "DOL", None, 132, 433, None),
+    ("Conveyor 1", "DOL", None, 90, 433, None),
+    ("Conveyor 2", "VFD", None, 75, 433, None),
+    ("Crusher", "DOL", None, 315, 433, None),
+    ("Dosing pump (amps only)", "DOL", 180, None, 433, None),
+    ("Booster fan (amps only)", "VFD", 120, None, 433, None),
+    ("Lighting & small power DB", "Feeder", 250, None, 433, None),
+    ("MCC-2 incomer", "Feeder", 800, None, 433, None),
+    ("Grinding mill", "DOL", None, 450, 690, None),
+    ("Slurry pump", "VFD", None, 355, 690, None),
 ]
 
 wb = Workbook()
@@ -32,7 +33,7 @@ for r in ROWS:
 for c in ws[1]:
     c.font = Font(bold=True)
     c.alignment = Alignment(wrap_text=True, vertical="center")
-for i, w in enumerate([34, 22, 16, 16, 16], start=1):
+for i, w in enumerate([36, 22, 16, 16, 16, 20], start=1):
     ws.column_dimensions[get_column_letter(i)].width = w
 ws.freeze_panes = "A2"
 
@@ -45,6 +46,8 @@ for line in [
     ("Only amps given and Type is anything else -> outgoing feeder. kVA = sqrt(3) x V x A.",),
     ("Power factor: DOL 0.7, VFD 0.9, feeder 0.7. Efficiency 95 %. All loads at 100 % (standby included).",),
     ("Voltage level: 433 or 690 (volts). Rows that do not match the selected transformer are listed as excluded.",),
+    ("Duty/standby group (optional): loads with the same group name are placed on different transformers' bus sections.",),
+    ("Optional columns can be left out; extra columns are ignored.",),
     ("The values in this file are examples only.",),
 ]:
     notes.append(list(line))
