@@ -1,5 +1,5 @@
 import writeExcelFile from "write-excel-file/universal";
-import { displayCombos, type ComboResult, type SetResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
+import { displayCombos, failureReason, type ComboResult, type SetResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
 
 /** Colours used in the Excel report. */
 export const REPORT_COLORS = {
@@ -167,7 +167,8 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     blockHeader("Recommendation"),
     rec
       ? kv("Recommended", verdict(`${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (sets of ${rec.layout.join(" + ")})` : ""}`, true))
-      : kv("Recommended", verdict("No configuration fits the ratings considered", false)),
+      : kv("Recommended", verdict(r.blockers.length > 0 ? "None: a load is too big for any transformer section" : "No configuration fits the ratings considered", false)),
+    ...r.blockers.map((m): Row => [cell("Cannot be placed"), cell(m)]),
     ...(rec ? [kv("Incomers", cell(rec.count, "left")), kv("Bus couplers", cell(rec.count - rec.layout.length, "left"))] : []),
     [],
     [label("Numbers of transformers tried")],
@@ -288,14 +289,14 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
   const data: Row[] = [
     [title(`${c.count} × ${c.chosen.ratingKva} kVA transformers, ${o.transformerLabel}`)],
     banner(c.fits ? "Fits within both limits" : "DOES NOT FIT within both limits", c.fits),
-    ...(c.added ? [noteBanner("Added because the selected number of transformers did not fit.")] : []),
+    ...(c.added ? [noteBanner("Added because the loads could not be balanced within the limits with fewer transformers.")] : []),
     [layoutLine],
     [],
     [label("Ratings considered")],
     heads("Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result"),
     ...c.candidates.map((x): Row => [
       cell(x.ratingKva, "center"), cell(x.installedKva, "center"), limited(x.normalPct, normalPct), limited(x.contingencyPct, contPct),
-      verdict(x.fits ? "Fits" : `Over limit (${[!x.normalOk && "normal", !x.contingencyOk && "one out"].filter(Boolean).join(" + ")})`, x.fits),
+      verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits),
     ]),
     [],
     ...(multi
