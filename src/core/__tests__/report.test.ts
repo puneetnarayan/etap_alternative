@@ -113,7 +113,7 @@ describe("Excel report with sets of transformers", () => {
     // 60 feeders of 83.33 kVA = 5,000 kVA; 3 x 2000 kVA (3,600) does not fit, 5 (3+2: 5,400) does
     const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
       rowNumber: i + 2, description: `F${i}`, type: "Feeder", voltageV: 433, status: "W" as const,
-      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 433),
+      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 420),
     }));
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [3] };
     const result = sizeTransformers(rows, 433, opts);
@@ -256,7 +256,7 @@ describe("Excel report formatting", () => {
 
   it("a limit is inclusive: exactly 90 % is within", async () => {
     // 1800 kVA on 2 x 2000 = exactly the 90 % one-out limit
-    const rows: RawLoadRow[] = [{ rowNumber: 2, description: "x", type: "Feeder", voltageV: 433, amps: (1800 * 1000) / (Math.sqrt(3) * 433) }];
+    const rows: RawLoadRow[] = [{ rowNumber: 2, description: "x", type: "Feeder", voltageV: 433, amps: (1800 * 1000) / (Math.sqrt(3) * 420) }];
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] };
     const sheets = buildReportSheets(sizeTransformers(rows, 433, opts), { transformerLabel: "x", options: opts, includePower: false });
     const two = sheets.find((x) => x.sheet === "2 Transformers")!.data;
@@ -371,7 +371,7 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
   it("several sets: one table per set; couplers only inside a set (named S1-BC1 ...), none between sets", async () => {
     const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
       rowNumber: i + 2, description: `F${i}`, type: "Feeder", voltageV: 433, status: "W" as const,
-      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 433),
+      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 420),
     }));
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [5] };
     const result = sizeTransformers(rows, 433, opts);
@@ -404,7 +404,7 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
 
 describe("Excel report when loads cannot be balanced / cannot be placed", () => {
   const kvaRows = (kvas: number[]): RawLoadRow[] =>
-    kvas.map((kva, i) => ({ rowNumber: i + 2, description: `L${i}`, type: "Feeder", voltageV: 433, amps: (kva * 1000) / (Math.sqrt(3) * 433) }));
+    kvas.map((kva, i) => ({ rowNumber: i + 2, description: `L${i}`, type: "Feeder", voltageV: 433, amps: (kva * 1000) / (Math.sqrt(3) * 420) }));
   const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
 
   it("states why a number of transformers does not fit (5 x 1000 kVA on 3 + 2)", async () => {
@@ -555,6 +555,16 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     expect(pctCells).toBeGreaterThan(20);
     expect(intCells).toBeGreaterThan(100);
     expect(pfCells).toBeGreaterThan(5);
+  });
+
+  it("the Summary states the voltage used to convert amps to kVA (420 V for 433 V, 690 V for 690 V)", async () => {
+    const { sheets } = await build();
+    const row = sheets[0].data.find((r) => val(r[0]) === "Voltage used to convert amps to kVA (V)")!;
+    expect(val(row[1])).toBe(420);
+    const raw = await readSheet(buf);
+    const r690 = sizeTransformers(parseLoadSheet(raw).rows, 690, BOTH);
+    const s690 = buildReportSheets(r690, { transformerLabel: "6600 / 690 V", options: BOTH, includePower: true })[0].data;
+    expect(val(s690.find((r) => val(r[0]) === "Voltage used to convert amps to kVA (V)")![1])).toBe(690);
   });
 
   it("the display is rounded but the values are not (kVA keeps its decimals underneath)", async () => {

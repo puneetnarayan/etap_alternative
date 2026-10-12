@@ -43,6 +43,12 @@ export interface SizingOptions {
    *  - "vector":     sqrt((sum kW)^2 + (sum kvar)^2)
    */
   totalBasis: "arithmetic" | "vector";
+  /**
+   * Voltage (V) used to turn a current into kVA (sqrt(3) x V x A) for loads given only in amps, by
+   * nominal voltage level. A level that is not listed uses its own value. 433 V loads are calculated
+   * at 420 V; the 433 V label, and matching loads to the 433 V transformer, are unchanged.
+   */
+  calculationVoltageV: Record<number, number>;
 }
 
 /** Standard transformer ratings offered in the UI (kVA). */
@@ -58,6 +64,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   maxTransformers: 20,
   stepUp: "min-installed",
   totalBasis: "arithmetic",
+  calculationVoltageV: { 433: 420 },
 };
 
 /** Transformer secondary voltage options offered in the UI (primary is 6600 V). */
@@ -190,7 +197,8 @@ export function sizeLoad(
   }
 
   const amps = row.amps as number;
-  const kva = (SQRT3 * voltageV * amps) / 1000;
+  const calcV = opts.calculationVoltageV[voltageV] ?? voltageV;
+  const kva = (SQRT3 * calcV * amps) / 1000;
   const isMotor = type === "DOL" || type === "VFD";
   const loadType: LoadType = isMotor ? type : "FEEDER";
   const pf = opts.powerFactor[loadType];
@@ -208,7 +216,7 @@ export function sizeLoad(
       kvar: kvarOf(kva * pf, kva),
       kva,
       powerFactor: pf,
-      basis: `√3 × ${voltageV} V × ${amps} A (kW shown at pf ${pf})`,
+      basis: `√3 × ${calcV} V × ${amps} A (kW shown at pf ${pf})`,
       group: row.group,
       status: row.status,
       warnings,

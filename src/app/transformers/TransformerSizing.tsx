@@ -83,6 +83,7 @@ export default function TransformerSizing() {
   const input = useRef<HTMLInputElement>(null);
 
   const tx = TRANSFORMER_OPTIONS.find((t) => t.id === txId)!;
+  const calcV = DEFAULT_OPTIONS.calculationVoltageV[tx.secondaryV] ?? tx.secondaryV;
 
   const opts: SizingOptions = useMemo(() => ({
     ...DEFAULT_OPTIONS,
@@ -184,7 +185,7 @@ export default function TransformerSizing() {
           <select value={txId} onChange={(e) => setTxId(e.target.value)}>
             {TRANSFORMER_OPTIONS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
-          <span> Only loads at {tx.secondaryV} V are included; other voltage levels are listed as excluded.</span>
+          <span> Only loads at {tx.secondaryV} V are included; other voltage levels are listed as excluded. Loads given in amps are converted to kVA at {fmtInt(calcV)} V.</span>
         </label>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Transformer rating</legend>

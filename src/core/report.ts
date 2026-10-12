@@ -184,6 +184,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Max transformer loading, normal running (%)", pct(normalPct)),
     kv("Max transformer loading, one transformer out (%)", pct(contPct)),
     kv("Ratings considered (kVA)", cell([...op.ratingsKva].sort((x, y) => x - y).join(", "))),
+    kv("Voltage used to convert amps to kVA (V)", n(op.calculationVoltageV[r.selectedVoltageV] ?? r.selectedVoltageV)),
     kv("Total kVA basis", cell("Arithmetic sum of each load's kVA")),
     kv("Load factor", cell("All loads at 100 % (working W and standby S)")),
     [],
