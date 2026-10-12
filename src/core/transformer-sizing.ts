@@ -25,6 +25,12 @@ export interface SizingOptions {
    *  - "count-first":   add a transformer before increasing the rating (2x2000, 3x2000, 2x2500, 3x2500, ...)
    */
   stepUp: "min-installed" | "count-first";
+  /**
+   * How the total load in kVA is formed:
+   *  - "arithmetic": sum of each load's kVA (conservative; ignores that loads have different power factors)
+   *  - "vector":     sqrt((sum kW)^2 + (sum kvar)^2)
+   */
+  totalBasis: "arithmetic" | "vector";
 }
 
 export const DEFAULT_OPTIONS: SizingOptions = {
@@ -35,6 +41,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   ratingsKva: [2000, 2500, 4000],
   counts: [2, 3],
   stepUp: "min-installed",
+  totalBasis: "arithmetic",
 };
 
 /** Transformer secondary voltage options offered in the UI (primary is 6600 V). */
@@ -53,6 +60,8 @@ export interface RawLoadRow {
   kw?: number;
   /** Volts. */
   voltageV?: number;
+  /** Optional duty/standby group: loads with the same group name are put on different transformer sections. */
+  group?: string;
   /** Set when a numeric cell could not be read (e.g. text in the Amps column). */
   badFields?: string[];
 }
@@ -63,10 +72,15 @@ export interface SizedLoad {
   kind: "motor" | "feeder";
   type: LoadType;
   voltageV: number;
+  /** Motor rating as given in the load list (shaft kW). Undefined for amps-only loads. */
+  ratedKw?: number;
+  /** Electrical input kW (motors: rated kW ÷ efficiency), so that kVA² = kW² + kvar². */
   kw: number;
+  kvar: number;
   kva: number;
   powerFactor: number;
   basis: string;
+  group?: string;
   warnings: string[];
 }
 
@@ -78,6 +92,7 @@ export interface RowIssue {
 }
 
 const SQRT3 = Math.sqrt(3);
+const kvarOf = (kw: number, kva: number) => Math.sqrt(Math.max(kva * kva - kw * kw, 0));
 const VOLTAGE_MATCH_TOLERANCE = 0.01;
 
 function normaliseType(raw: string): LoadType | "UNKNOWN" {
@@ -130,7 +145,8 @@ export function sizeLoad(
       );
     }
     const pf = opts.powerFactor[pfType];
-    const kva = row.kw / (pf * opts.efficiency);
+    const kwIn = row.kw / opts.efficiency;
+    const kva = kwIn / pf;
     return {
       load: {
         rowNumber: row.rowNumber,
@@ -138,10 +154,13 @@ export function sizeLoad(
         kind: "motor",
         type: pfType,
         voltageV,
-        kw: row.kw,
+        ratedKw: row.kw,
+        kw: kwIn,
+        kvar: kvarOf(kwIn, kva),
         kva,
         powerFactor: pf,
         basis: `kW ÷ (pf ${pf} × η ${opts.efficiency})`,
+        group: row.group,
         warnings,
       },
     };
@@ -163,9 +182,11 @@ export function sizeLoad(
       type: loadType,
       voltageV,
       kw: kva * pf,
+      kvar: kvarOf(kva * pf, kva),
       kva,
       powerFactor: pf,
       basis: `√3 × ${voltageV} V × ${amps} A (kW shown at pf ${pf})`,
+      group: row.group,
       warnings,
     },
   };
@@ -221,53 +242,141 @@ export function candidatesInOrder(totalKva: number, opts: SizingOptions = DEFAUL
   return all; // already rating-major, count-minor = "count-first"
 }
 
-export interface Section {
+export interface Power { kw: number; kvar: number; kva: number }
+
+/** Combine loads into one kW / kvar / kVA figure using the chosen total basis. */
+export function combine(loads: Pick<SizedLoad, "kw" | "kvar" | "kva">[], basis: SizingOptions["totalBasis"]): Power {
+  const kw = loads.reduce((a, l) => a + l.kw, 0);
+  const kvar = loads.reduce((a, l) => a + l.kvar, 0);
+  const kva = basis === "vector" ? Math.hypot(kw, kvar) : loads.reduce((a, l) => a + l.kva, 0);
+  return { kw, kvar, kva };
+}
+
+export interface Section extends Power {
   /** "T1", "T2", ... — also names the bus section fed by that transformer. */
   name: string;
   loads: SizedLoad[];
-  kva: number;
   /** % of rated kVA in normal running. */
   loadingPct: number;
   withinNormalLimit: boolean;
 }
 
+const groupKey = (g?: string) => (g ?? "").trim().toLowerCase();
+
 /**
  * Spread whole loads over the bus sections to balance kVA (largest load first, onto the
- * least-loaded section). Loads are never split, so sections will not be exactly equal.
+ * least-loaded section). Loads with the same duty/standby group go on different sections
+ * whenever the group is no larger than the number of sections. Loads are never split, so
+ * sections will not be exactly equal.
  */
 export function distributeLoads(
   loads: SizedLoad[],
   count: number,
   ratingKva: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
-): Section[] {
-  const sections: Section[] = Array.from({ length: count }, (_, i) => ({
-    name: `T${i + 1}`, loads: [], kva: 0, loadingPct: 0, withinNormalLimit: true,
-  }));
+): { sections: Section[]; notes: string[] } {
+  const buckets: SizedLoad[][] = Array.from({ length: count }, () => []);
+  const kvaOf = (i: number) => buckets[i].reduce((a, l) => a + l.kva, 0);
+  const usedByGroup = new Map<string, Set<number>>();
+  const notes: string[] = [];
   const sorted = [...loads].sort((a, b) => b.kva - a.kva || a.rowNumber - b.rowNumber);
+
   for (const load of sorted) {
-    const target = sections.reduce((min, s) => (s.kva < min.kva ? s : min), sections[0]);
-    target.loads.push(load);
-    target.kva += load.kva;
+    const key = groupKey(load.group);
+    const used = key ? (usedByGroup.get(key) ?? new Set<number>()) : new Set<number>();
+    let candidates = buckets.map((_, i) => i).filter((i) => !used.has(i));
+    if (candidates.length === 0) {
+      candidates = buckets.map((_, i) => i);
+      notes.push(
+        `Group "${load.group}" has more loads than the ${count} transformers, so "${load.description || `row ${load.rowNumber}`}" shares a section with another member.`,
+      );
+    }
+    const target = candidates.reduce((best, i) => (kvaOf(i) < kvaOf(best) ? i : best), candidates[0]);
+    buckets[target].push(load);
+    if (key) usedByGroup.set(key, used.add(target));
   }
-  for (const s of sections) {
-    s.loadingPct = (s.kva / ratingKva) * 100;
-    s.withinNormalLimit = s.loadingPct <= opts.normalLimit * 100 + 1e-9;
-  }
-  return sections;
+
+  const sections: Section[] = buckets.map((l, i) => {
+    const p = combine(l, opts.totalBasis);
+    const loadingPct = (p.kva / ratingKva) * 100;
+    return {
+      name: `T${i + 1}`, loads: l, ...p, loadingPct,
+      withinNormalLimit: loadingPct <= opts.normalLimit * 100 + 1e-9,
+    };
+  });
+  return { sections, notes };
+}
+
+export interface OneOutScenario {
+  /** Transformer that is out, e.g. "T2". */
+  outName: string;
+  /** kVA of that transformer's own bus section that has to be picked up by the others. */
+  movedKva: number;
+  /** kVA each remaining transformer carries (total shared equally through the closed bus couplers). */
+  eachKva: number;
+  loadingPct: number;
+  ok: boolean;
+}
+
+export interface ComboResult {
+  count: number;
+  incomers: number;
+  couplers: number;
+  /** One entry per rating considered, ascending. */
+  candidates: Candidate[];
+  /** Smallest rating that fits; if none fits, the largest rating considered (see `fits`). */
+  chosen: Candidate;
+  fits: boolean;
+  sections: Section[];
+  oneOut: OneOutScenario[];
+  notes: string[];
 }
 
 export interface SizingResult {
   selectedVoltageV: number;
   loads: SizedLoad[];
   issues: RowIssue[];
+  /** Totals by every basis, for display. */
+  totals: Power & { kvaArithmetic: number; kvaVector: number; powerFactor: number };
+  /** Total load used for sizing (per `totalBasis`). */
   totalKva: number;
   totalKw: number;
+  /** All counts × ratings, in order of preference. */
   candidates: Candidate[];
   recommended?: Candidate;
+  /** One result per transformer count considered (e.g. 2 and 3). */
+  combos: ComboResult[];
+  // Convenience for the recommended combination:
   incomers?: number;
   couplers?: number;
   sections?: Section[];
+}
+
+function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: SizingOptions): ComboResult {
+  const candidates = [...opts.ratingsKva]
+    .sort((a, b) => a - b)
+    .map((r) => evaluateCandidate(totalKva, count, r, opts));
+  const fitting = candidates.find((c) => c.fits);
+  const chosen = fitting ?? candidates[candidates.length - 1];
+  const { sections, notes } = distributeLoads(loads, count, chosen.ratingKva, opts);
+  const eachKva = totalKva / (count - 1);
+  const oneOut = sections.map((s) => {
+    const loadingPct = (eachKva / chosen.ratingKva) * 100;
+    return {
+      outName: s.name,
+      movedKva: s.kva,
+      eachKva,
+      loadingPct,
+      ok: loadingPct <= opts.contingencyLimit * 100 + 1e-9,
+    };
+  });
+  const overloaded = sections.filter((s) => !s.withinNormalLimit).map((s) => s.name);
+  if (fitting && overloaded.length > 0) {
+    notes.push(
+      `The total fits, but the balanced distribution puts ${overloaded.join(", ")} above the ${opts.normalLimit * 100} % normal limit (loads cannot be split).`,
+    );
+  }
+  return { count, incomers: count, couplers: count - 1, candidates, chosen, fits: !!fitting, sections, oneOut, notes };
 }
 
 export function sizeTransformers(
@@ -287,15 +396,29 @@ export function sizeTransformers(
       }
     }
   }
-  const totalKva = loads.reduce((s, l) => s + l.kva, 0);
-  const totalKw = loads.reduce((s, l) => s + l.kw, 0);
+  const arithmetic = combine(loads, "arithmetic");
+  const vector = combine(loads, "vector");
+  const used = opts.totalBasis === "vector" ? vector : arithmetic;
+  const totals = {
+    kw: used.kw,
+    kvar: used.kvar,
+    kva: used.kva,
+    kvaArithmetic: arithmetic.kva,
+    kvaVector: vector.kva,
+    powerFactor: vector.kva > 0 ? vector.kw / vector.kva : 0,
+  };
+  const totalKva = used.kva;
   const candidates = candidatesInOrder(totalKva, opts);
   const recommended = loads.length > 0 ? candidates.find((c) => c.fits) : undefined;
-  const result: SizingResult = { selectedVoltageV, loads, issues, totalKva, totalKw, candidates, recommended };
+  const combos = loads.length > 0 ? opts.counts.map((n) => buildCombo(loads, totalKva, n, opts)) : [];
+  const result: SizingResult = {
+    selectedVoltageV, loads, issues, totals, totalKva, totalKw: used.kw, candidates, recommended, combos,
+  };
   if (recommended) {
-    result.incomers = recommended.count;
-    result.couplers = recommended.count - 1;
-    result.sections = distributeLoads(loads, recommended.count, recommended.ratingKva, opts);
+    const combo = combos.find((c) => c.count === recommended.count)!;
+    result.incomers = combo.incomers;
+    result.couplers = combo.couplers;
+    result.sections = combo.sections;
   }
   return result;
 }
@@ -339,7 +462,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
   const headerIdx = data.findIndex((r) => r.some((c) => !blank(c)));
   if (headerIdx < 0) return { rows: [], errors: ["The sheet is empty."] };
 
-  const cols: Partial<Record<"description" | "type" | "voltage" | "amps" | "kw", number>> = {};
+  const cols: Partial<Record<"description" | "type" | "voltage" | "amps" | "kw" | "group", number>> = {};
   data[headerIdx].forEach((h, i) => {
     const n = norm(h);
     if (!n) return;
@@ -348,6 +471,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
     else if (n.includes("volt")) cols.voltage ??= i;
     else if (n.includes("amp")) cols.amps ??= i;
     else if (n.includes("kw")) cols.kw ??= i;
+    else if (n.includes("group") || n.includes("pair")) cols.group ??= i;
   });
 
   const missing = (["description", "type", "amps", "kw", "voltage"] as const).filter((k) => cols[k] === undefined);
@@ -378,6 +502,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
       amps: amps.value,
       kw: kw.value,
       voltageV: volt.value,
+      group: cols.group !== undefined && !blank(line[cols.group]) ? String(line[cols.group]).trim() : undefined,
       badFields: badFields.length ? badFields : undefined,
     });
   }

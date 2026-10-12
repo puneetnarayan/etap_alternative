@@ -21,7 +21,7 @@ npm run dev
 
 ## Tools
 
-- **Transformer sizing** (`/transformers`): drop an Excel load list, get the number and rating of 6.6 kV transformers. Rules: `docs/transformer-sizing.md`. Sample file: `public/sample_load_list.xlsx`.
+- **Transformer sizing** (`/transformers`): drop an Excel load list, get the number (2 or 3) and rating of 6.6 kV transformers, the load distribution per combination, and an Excel report. Rules: `docs/transformer-sizing.md`. Sample file: `public/sample_load_list.xlsx`.
 
 ## Roadmap
 
