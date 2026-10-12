@@ -42,6 +42,8 @@ function reportFileName(inputName: string, volts: number) {
 
 export default function TransformerSizing() {
   const [rows, setRows] = useState<RawLoadRow[] | null>(null);
+  // The uploaded sheet exactly as read, included in the Excel report as "Original load list".
+  const [rawSheet, setRawSheet] = useState<readonly (readonly unknown[])[]>([]);
   const [fileName, setFileName] = useState("");
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -76,10 +78,12 @@ export default function TransformerSizing() {
     [rows, result, tx, opts],
   );
 
-  async function makeReport(r: SizingResult, sourceName: string) {
+  async function makeReport(r: SizingResult, sourceName: string, sheet: readonly (readonly unknown[])[]) {
     setReport({ kind: "busy" });
     try {
-      const blob = await buildReportBlob(r, { transformerLabel: tx.label, fileName: sourceName, options: opts, includePower });
+      const blob = await buildReportBlob(r, {
+        transformerLabel: tx.label, fileName: sourceName, options: opts, includePower, originalSheet: sheet,
+      });
       const name = reportFileName(sourceName, r.selectedVoltageV);
       downloadBlob(blob, name);
       setReport({ kind: "done", name });
@@ -97,17 +101,19 @@ export default function TransformerSizing() {
       return;
     }
     try {
-      const parsed = parseLoadSheet(await readSheet(await file.arrayBuffer()));
+      const sheet = await readSheet(await file.arrayBuffer());
+      const parsed = parseLoadSheet(sheet);
       if (parsed.errors.length) {
         setRows(null);
         setLoadError(parsed.errors.join(" "));
         return;
       }
       setRows(parsed.rows);
+      setRawSheet(sheet);
       setFileName(file.name);
       // The Excel report is created and downloaded as soon as the file is in.
       const first = sizeTransformers(parsed.rows, tx.secondaryV, opts);
-      if (first.loads.length > 0) await makeReport(first, file.name);
+      if (first.loads.length > 0) await makeReport(first, file.name, sheet);
       else setReport({ kind: "error", message: `No usable loads at ${tx.secondaryV} V, so no Excel report was created.` });
     } catch (e) {
       setRows(null);
@@ -195,7 +201,7 @@ export default function TransformerSizing() {
       {result && (
         <Results
           result={result} tx={tx.label} opts={opts} alternative={alternative}
-          busy={report.kind === "busy"} onDownload={() => void makeReport(result, fileName)}
+          busy={report.kind === "busy"} onDownload={() => void makeReport(result, fileName, rawSheet)}
         />
       )}
     </div>
