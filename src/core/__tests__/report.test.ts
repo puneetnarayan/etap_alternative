@@ -5,7 +5,7 @@ import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, par
 
 /** Show both a set of 2 and a set of 3 (the page starts with 3 only). */
 const BOTH = { ...DEFAULT_OPTIONS, counts: [2, 3] };
-const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
+const file = readFileSync(new URL("./fixtures/small_plant_load_list.xlsx", import.meta.url));
 const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 
 async function report(includePower: boolean, volts = 433) {

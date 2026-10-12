@@ -267,7 +267,7 @@ describe("spreadsheet parsing", () => {
 });
 
 describe("sample workbook end to end", () => {
-  const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
+  const file = readFileSync(new URL("./fixtures/small_plant_load_list.xlsx", import.meta.url));
   const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 
   it("reads the sample and gives the hand-calculated 433 V result", async () => {
