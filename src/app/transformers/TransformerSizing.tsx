@@ -120,6 +120,7 @@ export default function TransformerSizing() {
               <input type="radio" name="combination" checked={combination === v} onChange={() => setCombination(v)} /> {label}
             </label>
           ))}
+          <div style={{ margin: "4px 0 6px" }}>If the selected number of transformers does not fit, more are added automatically (up to {DEFAULT_OPTIONS.maxTransformers}).</div>
         </fieldset>
       </div>
 
@@ -163,10 +164,10 @@ function Results({ result, tx, opts, fileName, alternative }: {
               <div style={{ fontSize: 20 }}><b>{rec.count} × {fmt(rec.ratingKva, 0)} kVA</b> transformers, {tx}</div>
             ) : (
               <div role="alert" style={{ color: BAD, fontSize: 18 }}>
-                No configuration fits: total load {fmt(result.totalKva)} kVA is above what the selected number of transformers at {fmt(opts.ratingsKva[0], 0)} kVA can carry within the limits.
+                No configuration fits: total load {fmt(result.totalKva)} kVA is above what up to {opts.maxTransformers} transformers of {fmt(opts.ratingsKva[0], 0)} kVA can carry within the limits.
                 {alternative
                   ? <> It would fit with <b>{alternative.count} × {fmt(alternative.ratingKva, 0)} kVA</b>.</>
-                  : <> No standard rating fits with the selected number of transformers.</>}
+                  : <> No standard rating fits within {opts.maxTransformers} transformers.</>}
               </div>
             )}
             <div>
@@ -232,6 +233,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
       <h4 style={{ marginBottom: 4 }}>
         {c.count} transformers: {c.fits ? <>{fmt(c.chosen.ratingKva, 0)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmt(c.chosen.ratingKva, 0)} kVA shown)</span>}
         {recommended && <span style={{ background: GOOD, borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>recommended</span>}
+        {c.added && <span style={{ border: "1px solid #888", borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>added: fewer transformers did not fit</span>}
       </h4>
       <p style={{ margin: "4px 0" }}>
         {c.incomers} incomers, {c.couplers} bus coupler{c.couplers === 1 ? "" : "s"}: {c.sections.map((s) => s.name).join(" — coupler — ")}.

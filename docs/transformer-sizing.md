@@ -26,6 +26,7 @@ Transformers: 6600 / 433 V or 6600 / 690 V (chosen in the UI). The rating is cho
 - **2 transformers:** 2 incomers + 1 bus coupler. **3 transformers:** 3 incomers + 2 bus couplers (bus sections in a line, T1 – T2 – T3). The UI can show both (automatic) or force 2 or 3.
 - Load shared equally in normal running: total ÷ (n × rating) ≤ **80 %**.
 - One transformer out, the remaining n − 1 sharing the whole load equally through the closed bus couplers: total ÷ ((n − 1) × rating) ≤ **90 %**. Each outage is listed per transformer.
+- **Adding transformers:** if none of the selected numbers (2, 3, or both in automatic mode) fits, more transformers are added one at a time (4, 5, 6 …, up to 8) until a combination fits; those cards/sheets are marked "added". n transformers means n incomers and n − 1 bus couplers, with the bus sections in a line (T1 – T2 – … – Tn); the one-out check uses the remaining n − 1. For 2000 kVA units the largest load n transformers can carry is min(0.8·n·R, 0.9·(n−1)·R): 1800 / 3600 / 5400 / 7200 / 9000 / 10800 / 12600 kVA for n = 2 … 8. The limit of 8 is an arbitrary cap (`maxTransformers`) – to be confirmed.
 - For each number of transformers the smallest rating that passes both limits is chosen (if none passes, the largest rating is shown, marked "does not fit").
 - With a single rating chosen, the recommendation is the first of 2 × rating, 3 × rating that passes.
 - Total kVA: arithmetic sum of each load's kVA (confirmed by the user). It is slightly above √((Σ kW)² + (Σ kvar)²).

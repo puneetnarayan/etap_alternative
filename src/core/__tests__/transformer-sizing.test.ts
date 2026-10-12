@@ -182,7 +182,7 @@ describe("combos and one-out check", () => {
   });
   it("a single configured rating that is too small reports no fit but still shows the distribution", () => {
     const big = [row({ rowNumber: 2, type: "Feeder", amps: 4000 })]; // ~3000 kVA
-    const r = sizeTransformers(big, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] });
+    const r = sizeTransformers(big, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2], maxTransformers: 2 });
     expect(r.recommended).toBeUndefined();
     expect(r.combos[0].fits).toBe(false);
     expect(r.combos[0].chosen.ratingKva).toBe(2000);
@@ -309,5 +309,74 @@ describe("sample workbook end to end", () => {
     expect(r.totalKva).toBeCloseTo(450 / 0.665 + 355 / 0.855, 6); // ~1091.9
     expect(r.recommended).toMatchObject({ count: 2, ratingKva: 2000 });
     expect(r.couplers).toBe(1);
+  });
+});
+
+describe("adding transformers when the selected number does not fit", () => {
+  // Largest load n x 2000 kVA can carry: min(0.8 * n * R, 0.9 * (n - 1) * R)
+  //   n=2: 1800  n=3: 3600  n=4: 5400  n=5: 7200  n=6: 9000  n=7: 10800  n=8: 12600
+  const feederKva = (kva: number): RawLoadRow[] => [
+    row({ rowNumber: 2, type: "Feeder", amps: (kva * 1000) / (SQ3 * 433) }),
+  ];
+  const only2000 = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
+
+  it("a selected number that fits is left alone (nothing added)", () => {
+    const r = sizeTransformers(feederKva(1500), 433, only2000);
+    expect(r.combos.map((c) => [c.count, c.added])).toEqual([[2, false], [3, false]]);
+    expect(r.recommended).toMatchObject({ count: 2, ratingKva: 2000 });
+  });
+  it("forced 2 that does not fit adds 3", () => {
+    const r = sizeTransformers(feederKva(3000), 433, { ...only2000, counts: [2] });
+    expect(r.combos.map((c) => [c.count, c.fits, c.added])).toEqual([[2, false, false], [3, true, true]]);
+    expect(r.recommended).toMatchObject({ count: 3, ratingKva: 2000 });
+    expect(r.couplers).toBe(2);
+  });
+  it("forced 3 that does not fit adds 4, then 5 as needed", () => {
+    const four = sizeTransformers(feederKva(5000), 433, { ...only2000, counts: [3] });
+    expect(four.combos.map((c) => c.count)).toEqual([3, 4]);
+    expect(four.recommended).toMatchObject({ count: 4 });
+    expect(four.incomers).toBe(4);
+    expect(four.couplers).toBe(3);
+    expect(four.sections).toHaveLength(4);
+    const five = sizeTransformers(feederKva(7000), 433, { ...only2000, counts: [3] });
+    expect(five.combos.map((c) => c.count)).toEqual([3, 4, 5]);
+    expect(five.recommended).toMatchObject({ count: 5 });
+  });
+  it("automatic (2 and 3) extends from 4 when neither fits; stops at the first fit", () => {
+    const r = sizeTransformers(feederKva(10000), 433, only2000);
+    expect(r.combos.map((c) => c.count)).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(r.combos.filter((c) => c.added).map((c) => c.count)).toEqual([4, 5, 6, 7]);
+    expect(r.combos.filter((c) => c.fits).map((c) => c.count)).toEqual([7]);
+    expect(r.recommended).toMatchObject({ count: 7 });
+  });
+  it("capacity boundaries are exact", () => {
+    // just under / over 3600 kVA for 3 x 2000
+    expect(sizeTransformers(feederKva(3599), 433, { ...only2000, counts: [3] }).combos).toHaveLength(1);
+    expect(sizeTransformers(feederKva(3601), 433, { ...only2000, counts: [3] }).combos.map((c) => c.count)).toEqual([3, 4]);
+  });
+  it("one-out figures use the actual count (n-1 units share the load)", () => {
+    const r = sizeTransformers(feederKva(5000), 433, { ...only2000, counts: [4] });
+    const c = r.combos[0];
+    expect(c.oneOut).toHaveLength(4);
+    expect(c.oneOut[0].eachKva).toBeCloseTo(5000 / 3, 0);
+    expect(c.oneOut[0].loadingPct).toBeCloseTo((5000 / 3 / 2000) * 100, 1); // 83.3 %
+    expect(c.oneOut.every((s) => s.ok)).toBe(true);
+  });
+  it("gives up at the maximum and reports no recommendation", () => {
+    const r = sizeTransformers(feederKva(25000), 433, only2000);
+    expect(r.recommended).toBeUndefined();
+    expect(Math.max(...r.combos.map((c) => c.count))).toBe(8);
+    expect(r.combos.every((c) => !c.fits)).toBe(true);
+    expect(sizeTransformers(feederKva(25000), 433, { ...only2000, maxTransformers: 3 }).combos.map((c) => c.count)).toEqual([2, 3]);
+  });
+  it("standby pairs stay on different sections with more transformers", () => {
+    const rows = [
+      ...feederKva(5000),
+      row({ rowNumber: 3, description: "A", type: "DOL", kw: 100, status: "W", group: "P" }),
+      row({ rowNumber: 4, description: "B", type: "DOL", kw: 100, status: "S", group: "P" }),
+    ];
+    const r = sizeTransformers(rows, 433, { ...only2000, counts: [3] });
+    const c = r.combos.find((x) => x.count === 4)!;
+    expect(c.sections.map((s) => s.loads.filter((l) => l.group === "P").length).every((n) => n <= 1)).toBe(true);
   });
 });
