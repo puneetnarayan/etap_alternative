@@ -19,6 +19,10 @@ npm run typecheck
 npm run dev
 ```
 
+## Tools
+
+- **Transformer sizing** (`/transformers`): drop an Excel load list, get the number and rating of 6.6 kV transformers. Rules: `docs/transformer-sizing.md`. Sample file: `public/sample_load_list.xlsx`.
+
 ## Roadmap
 
 1. **Foundation** (this phase)
