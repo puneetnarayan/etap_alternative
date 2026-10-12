@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OPTIONS, buildReportBlob, parseLoadSheet, sizeTransformers } from "..";
+import { DEFAULT_OPTIONS, buildReportBlob, parseLoadSheet, sizeTransformers, type RawLoadRow } from "..";
 
 const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
 const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
@@ -104,5 +104,35 @@ describe("Excel report with added transformers", () => {
     expect(String(sheets["3 Transformers"][2][0])).toContain("Added because the selected number");
     expect(sheets["2 Transformers"][1][0]).toContain("DOES NOT FIT");
     expect(find(sheets["Summary"], "Recommended")![1]).toBe("3 × 2000 kVA");
+  });
+});
+
+describe("Excel report with sets of transformers", () => {
+  it("5 transformers = sets of 3 + 2: sets, couplers, names, and every load once", async () => {
+    // 60 feeders of 83.33 kVA = 5,000 kVA; 3 x 2000 kVA (3,600) and 4 (2+2: 3,600) do not fit, 5 (3+2: 5,400) does
+    const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
+      rowNumber: i + 2, description: `F${i}`, type: "Feeder", voltageV: 433, status: "W" as const,
+      amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 433),
+    }));
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [3] };
+    const result = sizeTransformers(rows, 433, opts);
+    const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true });
+    const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
+    // selected (3) and the final one (5) get a sheet; 4 is only in the summary table
+    expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "3 Transformers", "5 Transformers"]);
+    const sum = sheets["Summary"];
+    expect(find(sum, "Recommended")![1]).toBe("5 × 2000 kVA (sets of 3 + 2)");
+    expect(find(sum, "Incomers")![1]).toBe(5);
+    expect(find(sum, "Bus couplers")![1]).toBe(3);
+    const tried = sum.filter((r) => typeof r[0] === "number" && typeof r[1] === "string" && /^[23]( \+ [23])*$/.test(r[1] as string));
+    expect(tried.map((r) => [r[0], r[1], r[3]])).toEqual([[3, "3", "No"], [4, "2 + 2", "No"], [5, "3 + 2", "Yes"]]);
+    const five = sheets["5 Transformers"];
+    expect(String(five[3][0])).toContain("5 incomers, 3 bus couplers, in 2 independent sets (3 + 2)");
+    expect(five.some((r) => String(r[0]).startsWith("Set 1: 3 transformers"))).toBe(true);
+    expect(five.some((r) => String(r[0]).startsWith("Set 2: 2 transformers"))).toBe(true);
+    const start = five.findIndex((r) => r[0] === "Loads by transformer");
+    const body = five.slice(start + 2);
+    expect(body).toHaveLength(60);
+    expect([...new Set(body.map((r) => r[0]))].sort()).toEqual(["S1-T1", "S1-T2", "S1-T3", "S2-T1", "S2-T2"]);
   });
 });

@@ -21,8 +21,8 @@ export interface SizingOptions {
   counts: number[];
   /**
    * If none of `counts` fits, more transformers are added one at a time (n+1, n+2, ...) until a
-   * combination fits or this many transformers is reached. n transformers = n incomers and n-1 bus
-   * couplers, with the bus sections in a line.
+   * combination fits or this many transformers is reached. More than 3 transformers are built from
+   * independent sets of 2 or 3 (see `layoutFor`).
    */
   maxTransformers: number;
   /**
@@ -49,7 +49,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   contingencyLimit: 0.9,
   ratingsKva: STANDARD_RATINGS_KVA,
   counts: [2, 3],
-  maxTransformers: 8,
+  maxTransformers: 20,
   stepUp: "min-installed",
   totalBasis: "arithmetic",
 };
@@ -210,13 +210,36 @@ export function sizeLoad(
   };
 }
 
+/**
+ * Split n transformers into independent sets of 2 or 3 transformers. Each set is its own switchboard:
+ * 2 incomers + 1 bus coupler (set of 2) or 3 incomers + 2 bus couplers (set of 3), with one coupler
+ * between neighbouring incomers and no coupler between sets. The split with the fewest sets
+ * (most sets of 3) is used because it carries the most load: 2, 3, 2+2, 3+2, 3+3, 3+2+2, 3+3+2, ...
+ */
+export function layoutFor(count: number): number[] {
+  if (!Number.isInteger(count) || count < 2) return [];
+  const threes = count % 3 === 0 ? count / 3 : count % 3 === 1 ? (count - 4) / 3 : (count - 2) / 3;
+  const twos = (count - 3 * threes) / 2;
+  return [...Array<number>(threes).fill(3), ...Array<number>(twos).fill(2)];
+}
+
+/** Largest load (kVA) a set of `size` transformers of `ratingKva` can carry within both limits. */
+export function setCapacityKva(size: number, ratingKva: number, opts: SizingOptions = DEFAULT_OPTIONS): number {
+  return Math.min(opts.normalLimit * size * ratingKva, opts.contingencyLimit * (size - 1) * ratingKva);
+}
+
 export interface Candidate {
   count: number;
+  /** Sizes of the independent sets, e.g. [3, 2] for 5 transformers. */
+  layout: number[];
   ratingKva: number;
   installedKva: number;
-  /** Loading of each transformer in normal running, % of rating (load shared equally). */
+  /** Average loading of all transformers in normal running, % of rating. */
   normalPct: number;
-  /** Loading of each remaining transformer with one out, % of rating (load shared equally). */
+  /**
+   * Loading of each remaining transformer with one out in each set, % of rating, with the load
+   * shared in proportion to what each set can carry (so the figure is the same in every set).
+   */
   contingencyPct: number;
   normalOk: boolean;
   contingencyOk: boolean;
@@ -231,20 +254,24 @@ export function evaluateCandidate(
   ratingKva: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
 ): Candidate {
+  const layout = layoutFor(count);
+  const sets = layout.length;
   const normalPct = (totalKva / (count * ratingKva)) * 100;
-  const contingencyPct = (totalKva / ((count - 1) * ratingKva)) * 100;
+  const contingencyPct = (totalKva / ((count - sets) * ratingKva)) * 100;
   const normalOk = normalPct <= opts.normalLimit * 100 + 1e-9;
   const contingencyOk = contingencyPct <= opts.contingencyLimit * 100 + 1e-9;
+  const maxLoadKva = layout.reduce((a, k) => a + setCapacityKva(k, ratingKva, opts), 0);
   return {
     count,
+    layout,
     ratingKva,
     installedKva: count * ratingKva,
     normalPct,
     contingencyPct,
     normalOk,
     contingencyOk,
-    fits: normalOk && contingencyOk,
-    maxLoadKva: Math.min(count * ratingKva * opts.normalLimit, (count - 1) * ratingKva * opts.contingencyLimit),
+    fits: totalKva <= maxLoadKva + 1e-9,
+    maxLoadKva,
   };
 }
 
@@ -271,7 +298,7 @@ export function combine(loads: Pick<SizedLoad, "kw" | "kvar" | "kva">[], basis: 
 }
 
 export interface Section extends Power {
-  /** "T1", "T2", ... — also names the bus section fed by that transformer. */
+  /** "T1", "T2", ... for a single set; "S1-T1", "S2-T2", ... when there are several sets. */
   name: string;
   loads: SizedLoad[];
   /** % of rated kVA in normal running. */
@@ -282,19 +309,43 @@ export interface Section extends Power {
 const groupKey = (g?: string) => (g ?? "").trim().toLowerCase();
 
 /**
- * Spread whole loads over the bus sections to balance kVA (largest load first, onto the
- * least-loaded section). Loads with the same duty/standby group go on different sections
- * whenever the group is no larger than the number of sections. Loads are never split, so
- * sections will not be exactly equal.
+ * Spread whole loads over the bus sections (one per transformer) to balance loading: largest load
+ * first, into the set that is emptiest relative to what it can carry, then onto that set's
+ * least-loaded section. Loads with the
+ * same duty/standby group go on different sections whenever the group is no larger than the number
+ * of sections. Loads are never split, so sections will not be exactly equal.
+ *
+ * With several sets, a set of 2 can carry less than a set of 3 (it is limited by the
+ * one-transformer-out case), so sets are filled in proportion to what they can carry.
  */
 export function distributeLoads(
   loads: SizedLoad[],
   count: number,
   ratingKva: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
+  layout: number[] = layoutFor(count),
 ): { sections: Section[]; notes: string[] } {
+  const sets = layout.reduce((a, k) => a + k, 0) === count ? layout : [count];
+  const names: string[] = [];
+  const setOf: number[] = [];
+  sets.forEach((k, si) => {
+    for (let j = 0; j < k; j++) {
+      names.push(sets.length === 1 ? `T${j + 1}` : `S${si + 1}-T${j + 1}`);
+      setOf.push(si);
+    }
+  });
+  const setCap = sets.map((k) => (sets.length === 1 ? 1 : setCapacityKva(k, ratingKva, opts)));
+
   const buckets: SizedLoad[][] = Array.from({ length: count }, () => []);
   const kvaOf = (i: number) => buckets[i].reduce((a, l) => a + l.kva, 0);
+  const setKva = (si: number) => buckets.reduce((a, b, i) => (setOf[i] === si ? a + b.reduce((x, l) => x + l.kva, 0) : a), 0);
+  // Fill the set that is emptiest relative to what it can carry, then its least-loaded section.
+  const better = (i: number, j: number) => {
+    const fi = setKva(setOf[i]) / setCap[setOf[i]];
+    const fj = setKva(setOf[j]) / setCap[setOf[j]];
+    if (Math.abs(fi - fj) > 1e-12) return fi < fj;
+    return kvaOf(i) < kvaOf(j);
+  };
   const usedByGroup = new Map<string, Set<number>>();
   const notes: string[] = [];
   const sorted = [...loads].sort((a, b) => b.kva - a.kva || a.rowNumber - b.rowNumber);
@@ -309,7 +360,7 @@ export function distributeLoads(
         `Group "${load.group}" has more loads than the ${count} transformers, so "${load.description || `row ${load.rowNumber}`}" shares a section with another member.`,
       );
     }
-    const target = candidates.reduce((best, i) => (kvaOf(i) < kvaOf(best) ? i : best), candidates[0]);
+    const target = candidates.reduce((best, i) => (better(i, best) ? i : best), candidates[0]);
     buckets[target].push(load);
     if (key) usedByGroup.set(key, used.add(target));
   }
@@ -318,7 +369,7 @@ export function distributeLoads(
     const p = combine(l, opts.totalBasis);
     const loadingPct = (p.kva / ratingKva) * 100;
     return {
-      name: `T${i + 1}`, loads: l, ...p, loadingPct,
+      name: names[i], loads: l, ...p, loadingPct,
       withinNormalLimit: loadingPct <= opts.normalLimit * 100 + 1e-9,
     };
   });
@@ -326,19 +377,41 @@ export function distributeLoads(
 }
 
 export interface OneOutScenario {
-  /** Transformer that is out, e.g. "T2". */
+  /** Transformer that is out, e.g. "T2" or "S2-T1". */
   outName: string;
-  /** kVA of that transformer's own bus section that has to be picked up by the others. */
+  /** kVA of that transformer's own bus section that has to be picked up by the others in its set. */
   movedKva: number;
-  /** kVA each remaining transformer carries (total shared equally through the closed bus couplers). */
+  /** kVA each remaining transformer of the set carries (the set's load shared equally through its couplers). */
   eachKva: number;
   loadingPct: number;
   ok: boolean;
 }
 
-export interface ComboResult {
-  count: number;
+/** One independent set (switchboard) of 2 or 3 transformers. */
+export interface SetResult {
+  /** 1-based. */
+  index: number;
+  size: number;
   incomers: number;
+  couplers: number;
+  sections: Section[];
+  /** Load assigned to this set. */
+  kva: number;
+  kw: number;
+  kvar: number;
+  /** What this set can carry within both limits. */
+  capacityKva: number;
+  oneOut: OneOutScenario[];
+}
+
+export interface ComboResult {
+  /** Total number of transformers. */
+  count: number;
+  /** Sizes of the independent sets, e.g. [3, 2] for 5 transformers. */
+  layout: number[];
+  /** Total incomers (one per transformer). */
+  incomers: number;
+  /** Total bus couplers: one between neighbouring incomers within each set, none between sets. */
   couplers: number;
   /** True when this number of transformers was added because the selected number(s) did not fit. */
   added: boolean;
@@ -347,6 +420,8 @@ export interface ComboResult {
   /** Smallest rating that fits; if none fits, the largest rating considered (see `fits`). */
   chosen: Candidate;
   fits: boolean;
+  sets: SetResult[];
+  /** All sections / one-out scenarios of all sets, in order. */
   sections: Section[];
   oneOut: OneOutScenario[];
   notes: string[];
@@ -364,7 +439,7 @@ export interface SizingResult {
   /** All counts × ratings, in order of preference. */
   candidates: Candidate[];
   recommended?: Candidate;
-  /** One result per transformer count considered (e.g. 2 and 3). */
+  /** One result per number of transformers tried (the selected ones, then any added). */
   combos: ComboResult[];
   // Convenience for the recommended combination:
   incomers?: number;
@@ -378,25 +453,72 @@ function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: S
     .map((r) => evaluateCandidate(totalKva, count, r, opts));
   const fitting = candidates.find((c) => c.fits);
   const chosen = fitting ?? candidates[candidates.length - 1];
-  const { sections, notes } = distributeLoads(loads, count, chosen.ratingKva, opts);
-  const eachKva = totalKva / (count - 1);
-  const oneOut = sections.map((s) => {
-    const loadingPct = (eachKva / chosen.ratingKva) * 100;
+  const R = chosen.ratingKva;
+  const { sections, notes } = distributeLoads(loads, count, R, opts, chosen.layout);
+
+  let at = 0;
+  const sets: SetResult[] = chosen.layout.map((size, i) => {
+    const own = sections.slice(at, at + size);
+    at += size;
+    const p = combine(own.flatMap((s) => s.loads), opts.totalBasis);
+    const eachKva = p.kva / (size - 1);
+    const loadingPct = (eachKva / R) * 100;
+    const capacityKva = setCapacityKva(size, R, opts);
+    if (chosen.layout.length > 1 && p.kva > capacityKva + 1e-9) {
+      notes.push(
+        `Set ${i + 1} carries ${p.kva.toFixed(1)} kVA, above its limit of ${capacityKva.toFixed(1)} kVA (loads cannot be split between sets).`,
+      );
+    }
     return {
-      outName: s.name,
-      movedKva: s.kva,
-      eachKva,
-      loadingPct,
-      ok: loadingPct <= opts.contingencyLimit * 100 + 1e-9,
+      index: i + 1,
+      size,
+      incomers: size,
+      couplers: size - 1,
+      sections: own,
+      ...p,
+      capacityKva,
+      oneOut: own.map((s) => ({
+        outName: s.name,
+        movedKva: s.kva,
+        eachKva,
+        loadingPct,
+        ok: loadingPct <= opts.contingencyLimit * 100 + 1e-9,
+      })),
     };
   });
+
   const overloaded = sections.filter((s) => !s.withinNormalLimit).map((s) => s.name);
   if (fitting && overloaded.length > 0) {
     notes.push(
       `The total fits, but the balanced distribution puts ${overloaded.join(", ")} above the ${opts.normalLimit * 100} % normal limit (loads cannot be split).`,
     );
   }
-  return { count, incomers: count, couplers: count - 1, added, candidates, chosen, fits: !!fitting, sections, oneOut, notes };
+  return {
+    count,
+    layout: chosen.layout,
+    incomers: count,
+    couplers: count - chosen.layout.length,
+    added,
+    candidates,
+    chosen,
+    fits: !!fitting,
+    sets,
+    sections,
+    oneOut: sets.flatMap((s) => s.oneOut),
+    notes,
+  };
+}
+
+/**
+ * The combinations worth showing in full: the selected numbers of transformers, plus (when numbers
+ * were added) only the one that finally fits, or the last one tried if none fits. The others are
+ * summarised in a table of numbers tried.
+ */
+export function displayCombos(result: SizingResult): ComboResult[] {
+  const selected = result.combos.filter((c) => !c.added);
+  const added = result.combos.filter((c) => c.added);
+  if (added.length === 0) return selected;
+  return [...selected, added.find((c) => c.fits) ?? added[added.length - 1]];
 }
 
 export function sizeTransformers(
@@ -429,7 +551,7 @@ export function sizeTransformers(
   };
   const totalKva = used.kva;
   const combos = loads.length > 0
-    ? [...new Set(opts.counts)].sort((a, b) => a - b).map((n) => buildCombo(loads, totalKva, n, opts))
+    ? [...new Set(opts.counts)].filter((n) => n >= 2).sort((a, b) => a - b).map((n) => buildCombo(loads, totalKva, n, opts))
     : [];
   // None of the selected numbers fits: add transformers until a combination fits (or the maximum is reached).
   for (let n = Math.max(0, ...combos.map((c) => c.count)) + 1;
