@@ -5,7 +5,7 @@ import { readSheet } from "read-excel-file/universal";
 import {
   DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
   sizeTransformers,
-  type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
+  failureReason, type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
 } from "@/core";
 
 const th = { padding: "4px 10px", borderBottom: "1px solid #888", textAlign: "right" as const, whiteSpace: "nowrap" as const };
@@ -15,7 +15,7 @@ const fmt = (n: number, d = 1) => n.toLocaleString("en-US", { minimumFractionDig
 const GOOD = "rgba(40,160,70,0.18)";
 const BAD = "crimson";
 
-type Combination = "auto" | "2" | "3";
+type Combination = "3" | "2";
 type ReportStatus = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string } | { kind: "error"; message: string };
 
 function num(s: string, fallback: number, min: number, max: number) {
@@ -48,7 +48,7 @@ export default function TransformerSizing() {
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [txId, setTxId] = useState<string>(TRANSFORMER_OPTIONS[0].id);
-  const [combination, setCombination] = useState<Combination>("auto");
+  const [combination, setCombination] = useState<Combination>("3");
   const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
   const [pfDol, setPfDol] = useState("0.7");
@@ -65,7 +65,7 @@ export default function TransformerSizing() {
     efficiency: num(eff, 95, 0, 100) / 100,
     powerFactor: { DOL: num(pfDol, 0.7, 0, 1), VFD: num(pfVfd, 0.9, 0, 1), FEEDER: num(pfFeeder, 0.7, 0, 1) },
     ratingsKva: [rating],
-    counts: combination === "auto" ? [2, 3] : [Number(combination)],
+    counts: [Number(combination)],
   }), [eff, pfDol, pfVfd, pfFeeder, rating, combination]);
 
   const result = useMemo(() => (rows ? sizeTransformers(rows, tx.secondaryV, opts) : null), [rows, tx, opts]);
@@ -171,15 +171,15 @@ export default function TransformerSizing() {
           ))}
         </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
-          <legend>Number of transformers</legend>
-          {([["auto", "Automatic (2 or 3, show both)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"], ["3", "3 transformers (3 incomers, 2 bus couplers)"]] as const).map(([v, label]) => (
+          <legend>Start with</legend>
+          {([["3", "3 transformers (3 incomers, 2 bus couplers)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"]] as const).map(([v, label]) => (
             <label key={v} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
               <input type="radio" name="combination" checked={combination === v} onChange={() => setCombination(v)} /> {label}
             </label>
           ))}
           <div style={{ margin: "4px 0 6px" }}>
-            If the selected number does not fit, more are added automatically (up to {DEFAULT_OPTIONS.maxTransformers}) as independent sets of 2 or 3
-            transformers, with a bus coupler between neighbouring incomers in each set and none between sets.
+            The number of transformers is not fixed. If the loads cannot be balanced within the limits, more are added (up to {DEFAULT_OPTIONS.maxTransformers}):
+            more sets of 3 first, and a set of 2 at the end for the remainder. A bus coupler sits between neighbouring incomers in a set and none between sets.
           </div>
         </fieldset>
       </div>
@@ -233,7 +233,14 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
               <div style={{ fontSize: 20 }}><b>{rec.count} × {fmt(rec.ratingKva, 0)} kVA</b> transformers{layoutText(rec)}, {tx}</div>
             ) : (
               <div role="alert" style={{ color: BAD, fontSize: 18 }}>
-                No configuration fits: total load {fmt(result.totalKva)} kVA is above what up to {opts.maxTransformers} transformers of {fmt(opts.ratingsKva[0], 0)} kVA can carry within the limits.
+                {result.blockers.length > 0 ? (
+                  <>
+                    These loads are too big for any single transformer section, so adding transformers cannot help:
+                    <ul style={{ margin: "4px 0", fontSize: 15 }}>{result.blockers.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                  </>
+                ) : (
+                  <>No configuration fits: with up to {opts.maxTransformers} transformers of {fmt(opts.ratingsKva[0], 0)} kVA the loads (total {fmt(result.totalKva)} kVA) cannot be balanced within the limits.</>
+                )}
                 {alternative
                   ? <> It would fit with <b>{alternative.count} × {fmt(alternative.ratingKva, 0)} kVA</b>{layoutText(alternative)}.</>
                   : <> No standard rating fits within {opts.maxTransformers} transformers.</>}
@@ -307,7 +314,7 @@ function Tried({ combos, recommendedCount }: { combos: ComboResult[]; recommende
   return (
     <div style={{ overflowX: "auto", margin: "12px 0" }}>
       <table style={{ borderCollapse: "collapse" }}>
-        <caption style={{ textAlign: "left" }}><b>Numbers of transformers tried</b> (more were added because the selected number did not fit)</caption>
+        <caption style={{ textAlign: "left" }}><b>Numbers of transformers tried</b> (more were added because the loads could not be balanced within the limits)</caption>
         <thead><tr>
           <th style={th}>Transformers</th><th style={{ ...th, ...left }}>Sets</th><th style={th}>Max load kVA</th>
           <th style={th}>Avg normal %</th><th style={th}>One out %</th><th style={{ ...th, ...left }}>Result</th>
@@ -317,7 +324,7 @@ function Tried({ combos, recommendedCount }: { combos: ComboResult[]; recommende
             <tr key={c.count} style={{ background: c.count === recommendedCount ? GOOD : undefined }}>
               <td style={td}>{c.count}</td><td style={{ ...td, ...left }}>{c.layout.join(" + ")}</td>
               <td style={td}>{fmt(c.chosen.maxLoadKva, 0)}</td><td style={td}>{fmt(c.chosen.normalPct)}</td><td style={td}>{fmt(c.chosen.contingencyPct)}</td>
-              <td style={{ ...td, ...left }}>{c.fits ? (c.count === recommendedCount ? "✔ recommended" : "✔ fits") : "✘ over limit"}</td>
+              <td style={{ ...td, ...left }}>{c.fits ? (c.count === recommendedCount ? "✔ recommended" : "✔ fits") : `✘ ${failureReason(c.chosen)}`}</td>
             </tr>
           ))}
         </tbody>
@@ -334,7 +341,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
       <h4 style={{ marginBottom: 4 }}>
         {c.count} transformers{layoutText(c)}: {c.fits ? <>{fmt(c.chosen.ratingKva, 0)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmt(c.chosen.ratingKva, 0)} kVA shown)</span>}
         {recommended && <span style={{ background: GOOD, borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>recommended</span>}
-        {c.added && <span style={{ border: "1px solid #888", borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>added: fewer transformers did not fit</span>}
+        {c.added && <span style={{ border: "1px solid #888", borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>added: fewer could not be balanced</span>}
       </h4>
       <p style={{ margin: "4px 0" }}>
         {c.incomers} incomers, {c.couplers} bus coupler{c.couplers === 1 ? "" : "s"}
@@ -355,7 +362,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
                 <td style={{ ...td, ...left }}>{c.count} × {fmt(x.ratingKva, 0)} kVA</td><td style={td}>{fmt(x.installedKva, 0)}</td>
                 <td style={td}>{fmt(x.normalPct)}</td><td style={td}>{fmt(x.contingencyPct)}</td>
                 <td style={{ ...td, ...left }}>
-                  {x.fits ? "✔ fits" : `✘ ${[!x.normalOk && "normal", !x.contingencyOk && "one out"].filter(Boolean).join(" + ")} over limit`}
+                  {x.fits ? "✔ fits" : `✘ ${failureReason(x)}`}
                 </td>
               </tr>
             ))}

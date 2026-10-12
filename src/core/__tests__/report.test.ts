@@ -3,14 +3,16 @@ import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, parseLoadSheet, sizeTransformers, type RawLoadRow, type ReportCell } from "..";
 
+/** Show both a set of 2 and a set of 3 (the page starts with 3 only). */
+const BOTH = { ...DEFAULT_OPTIONS, counts: [2, 3] };
 const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
 const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 
 async function report(includePower: boolean, volts = 433) {
   const parsed = parseLoadSheet(await readSheet(buf));
-  const result = sizeTransformers(parsed.rows, volts);
+  const result = sizeTransformers(parsed.rows, volts, BOTH);
   const blob = await buildReportBlob(result, {
-    transformerLabel: `6600 / ${volts} V`, fileName: "sample.xlsx", options: DEFAULT_OPTIONS, includePower,
+    transformerLabel: `6600 / ${volts} V`, fileName: "sample.xlsx", options: BOTH, includePower,
   });
   const sheets = await readExcelFile(await blob.arrayBuffer());
   return { result, sheets: Object.fromEntries(sheets.map((s) => [s.sheet, s.data])) as Record<string, unknown[][]> };
@@ -99,7 +101,7 @@ describe("Excel report with added transformers", () => {
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
     expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
-    expect(String(sheets["3 Transformers"][2][0])).toContain("Added because the selected number");
+    expect(String(sheets["3 Transformers"][2][0])).toContain("Added because the loads could not be balanced");
     expect(sheets["2 Transformers"][1][0]).toContain("DOES NOT FIT");
     expect(find(sheets["Summary"], "Recommended")![1]).toBe("3 × 2000 kVA");
   });
@@ -107,7 +109,7 @@ describe("Excel report with added transformers", () => {
 
 describe("Excel report with sets of transformers", () => {
   it("5 transformers = sets of 3 + 2: sets, couplers, names, and every load once", async () => {
-    // 60 feeders of 83.33 kVA = 5,000 kVA; 3 x 2000 kVA (3,600) and 4 (2+2: 3,600) do not fit, 5 (3+2: 5,400) does
+    // 60 feeders of 83.33 kVA = 5,000 kVA; 3 x 2000 kVA (3,600) does not fit, 5 (3+2: 5,400) does
     const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
       rowNumber: i + 2, description: `F${i}`, type: "Feeder", voltageV: 433, status: "W" as const,
       amps: (5000 / 60 * 1000) / (Math.sqrt(3) * 433),
@@ -123,7 +125,7 @@ describe("Excel report with sets of transformers", () => {
     expect(find(sum, "Incomers")![1]).toBe(5);
     expect(find(sum, "Bus couplers")![1]).toBe(3);
     const tried = sum.filter((r) => typeof r[0] === "number" && typeof r[1] === "string" && /^[23]( \+ [23])*$/.test(r[1] as string));
-    expect(tried.map((r) => [r[0], r[1], r[3]])).toEqual([[3, "3", "No"], [4, "2 + 2", "No"], [5, "3 + 2", "Yes"]]);
+    expect(tried.map((r) => [r[0], r[1], r[3]])).toEqual([[3, "3", "No"], [5, "3 + 2", "Yes"]]); // 4 (2 + 2) adds nothing: skipped
     const five = sheets["5 Transformers"];
     expect(String(five[3][0])).toContain("5 incomers, 3 bus couplers, in 2 independent sets (3 + 2)");
     expect(five.some((r) => String(r[0]).startsWith("Set 1: 3 transformers"))).toBe(true);
@@ -137,7 +139,7 @@ describe("Excel report with sets of transformers", () => {
 describe("Excel report formatting", () => {
   const bg = (c: ReportCell) => (c && typeof c === "object" ? c.backgroundColor : undefined);
   const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
-  const sheetsFor = async (opts = DEFAULT_OPTIONS, volts = 433) => {
+  const sheetsFor = async (opts = BOTH, volts = 433) => {
     const raw = await readSheet(buf);
     const result = sizeTransformers(parseLoadSheet(raw).rows, volts, opts);
     const sheets = buildReportSheets(result, { transformerLabel: `6600 / ${volts} V`, options: opts, includePower: true, originalSheet: raw });
@@ -266,7 +268,7 @@ describe("Excel report formatting", () => {
 describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light yellow)", () => {
   const bg = (c: ReportCell) => (c && typeof c === "object" ? c.backgroundColor : undefined);
   const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
-  const sheetFor = async (opts = DEFAULT_OPTIONS, includePower = true) => {
+  const sheetFor = async (opts = BOTH, includePower = true) => {
     const raw = await readSheet(buf);
     const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
     const sheets = buildReportSheets(result, { transformerLabel: "6600 / 433 V", options: opts, includePower });
@@ -356,7 +358,7 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
 
   it("rows line up with the header with and without the kW / kvar / power-factor columns", async () => {
     for (const includePower of [true, false]) {
-      const { sheets } = await sheetFor(DEFAULT_OPTIONS, includePower);
+      const { sheets } = await sheetFor(BOTH, includePower);
       const rows = sheets["3 Transformers"].data;
       const hIdx = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
       const width = rows[hIdx].length;
@@ -396,5 +398,30 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
     expect(legend).toBeGreaterThan(0);
     expect(rows.filter((r) => r[0] === "Incomer")).toHaveLength(4); // legend cell + 3 incomers
     expect(rows.filter((r) => r[0] === "Bus coupler")).toHaveLength(2); // 2 couplers (the legend has it in column 2)
+  });
+});
+
+describe("Excel report when loads cannot be balanced / cannot be placed", () => {
+  const kvaRows = (kvas: number[]): RawLoadRow[] =>
+    kvas.map((kva, i) => ({ rowNumber: i + 2, description: `L${i}`, type: "Feeder", voltageV: 433, amps: (kva * 1000) / (Math.sqrt(3) * 433) }));
+  const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
+
+  it("states why a number of transformers does not fit (5 x 1000 kVA on 3 + 2)", async () => {
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [5] };
+    const result = sizeTransformers(kvaRows([1000, 1000, 1000, 1000, 1000]), 433, opts);
+    const sheets = buildReportSheets(result, { transformerLabel: "x", options: opts, includePower: false });
+    const five = sheets.find((x) => x.sheet === "5 Transformers")!.data;
+    expect(five.some((r) => val(r[4]) === "Does not fit: loads cannot be balanced within the limits")).toBe(true);
+    expect(sheets.map((x) => x.sheet)).toContain("6 Transformers"); // 6 was added and fits
+    expect(String(val(sheets.find((x) => x.sheet === "6 Transformers")!.data[2][0]))).toContain("could not be balanced");
+  });
+
+  it("lists loads that no transformer section can carry on the Summary", async () => {
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
+    const result = sizeTransformers(kvaRows([1700, 300]), 433, opts);
+    const sum = buildReportSheets(result, { transformerLabel: "x", options: opts, includePower: false })[0].data;
+    expect(sum.some((r) => String(val(r[1])).startsWith("None: a load is too big"))).toBe(true);
+    const row = sum.find((r) => val(r[0]) === "Cannot be placed")!;
+    expect(String(val(row[1]))).toContain("L0");
   });
 });
