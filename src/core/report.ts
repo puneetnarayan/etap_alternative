@@ -106,6 +106,7 @@ function comboSheet(c: ComboResult, r: SizingResult, o: ReportOptions): ReportSh
   const data: Row[] = [
     [b(`${c.count} × ${c.chosen.ratingKva} kVA transformers, ${o.transformerLabel}`)],
     [c.fits ? "Fits within both limits" : b("DOES NOT FIT within both limits")],
+    ...(c.added ? ([["Added because the selected number of transformers did not fit."]] as Row[]) : []),
     [`${c.incomers} incomers, ${c.couplers} bus coupler${c.couplers === 1 ? "" : "s"}; bus sections in a line: ${c.sections.map((s) => s.name).join(" – coupler – ")}`],
     [],
     [b("Ratings considered")],

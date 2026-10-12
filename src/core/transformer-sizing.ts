@@ -20,6 +20,12 @@ export interface SizingOptions {
   /** Candidate counts to consider. 2 = two incomers + 1 coupler; 3 = three incomers + 2 couplers. */
   counts: number[];
   /**
+   * If none of `counts` fits, more transformers are added one at a time (n+1, n+2, ...) until a
+   * combination fits or this many transformers is reached. n transformers = n incomers and n-1 bus
+   * couplers, with the bus sections in a line.
+   */
+  maxTransformers: number;
+  /**
    * How to order candidates before picking the first that fits:
    *  - "min-installed": ascending total installed kVA (2x2000, 2x2500, 3x2000, 3x2500, 2x4000, 3x4000)
    *  - "count-first":   add a transformer before increasing the rating (2x2000, 3x2000, 2x2500, 3x2500, ...)
@@ -43,6 +49,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   contingencyLimit: 0.9,
   ratingsKva: STANDARD_RATINGS_KVA,
   counts: [2, 3],
+  maxTransformers: 8,
   stepUp: "min-installed",
   totalBasis: "arithmetic",
 };
@@ -333,6 +340,8 @@ export interface ComboResult {
   count: number;
   incomers: number;
   couplers: number;
+  /** True when this number of transformers was added because the selected number(s) did not fit. */
+  added: boolean;
   /** One entry per rating considered, ascending. */
   candidates: Candidate[];
   /** Smallest rating that fits; if none fits, the largest rating considered (see `fits`). */
@@ -363,7 +372,7 @@ export interface SizingResult {
   sections?: Section[];
 }
 
-function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: SizingOptions): ComboResult {
+function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: SizingOptions, added = false): ComboResult {
   const candidates = [...opts.ratingsKva]
     .sort((a, b) => a - b)
     .map((r) => evaluateCandidate(totalKva, count, r, opts));
@@ -387,7 +396,7 @@ function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: S
       `The total fits, but the balanced distribution puts ${overloaded.join(", ")} above the ${opts.normalLimit * 100} % normal limit (loads cannot be split).`,
     );
   }
-  return { count, incomers: count, couplers: count - 1, candidates, chosen, fits: !!fitting, sections, oneOut, notes };
+  return { count, incomers: count, couplers: count - 1, added, candidates, chosen, fits: !!fitting, sections, oneOut, notes };
 }
 
 export function sizeTransformers(
@@ -419,9 +428,16 @@ export function sizeTransformers(
     powerFactor: vector.kva > 0 ? vector.kw / vector.kva : 0,
   };
   const totalKva = used.kva;
-  const candidates = candidatesInOrder(totalKva, opts);
+  const combos = loads.length > 0
+    ? [...new Set(opts.counts)].sort((a, b) => a - b).map((n) => buildCombo(loads, totalKva, n, opts))
+    : [];
+  // None of the selected numbers fits: add transformers until a combination fits (or the maximum is reached).
+  for (let n = Math.max(0, ...combos.map((c) => c.count)) + 1;
+    combos.length > 0 && !combos.some((c) => c.fits) && n <= opts.maxTransformers; n++) {
+    combos.push(buildCombo(loads, totalKva, n, opts, true));
+  }
+  const candidates = candidatesInOrder(totalKva, { ...opts, counts: combos.map((c) => c.count) });
   const recommended = loads.length > 0 ? candidates.find((c) => c.fits) : undefined;
-  const combos = loads.length > 0 ? opts.counts.map((n) => buildCombo(loads, totalKva, n, opts)) : [];
   const result: SizingResult = {
     selectedVoltageV, loads, issues, totals, totalKva, totalKw: used.kw, candidates, recommended, combos,
   };

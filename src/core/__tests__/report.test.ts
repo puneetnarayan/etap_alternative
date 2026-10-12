@@ -91,3 +91,18 @@ describe("Excel report", () => {
     expect(issues.filter((r) => r[2] === "Excluded")).toHaveLength(2);
   });
 });
+
+describe("Excel report with added transformers", () => {
+  it("has a sheet for each combination including added ones, and says so", async () => {
+    const parsed = parseLoadSheet(await readSheet(buf));
+    // Only the 2000 kVA rating and 2 transformers forced: 3471.6 kVA does not fit 2, so 3 is added.
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] };
+    const result = sizeTransformers(parsed.rows, 433, opts);
+    const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true });
+    const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
+    expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
+    expect(String(sheets["3 Transformers"][2][0])).toContain("Added because the selected number");
+    expect(sheets["2 Transformers"][1][0]).toContain("DOES NOT FIT");
+    expect(find(sheets["Summary"], "Recommended")![1]).toBe("3 × 2000 kVA");
+  });
+});
