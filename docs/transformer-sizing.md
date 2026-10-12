@@ -40,7 +40,11 @@ Whole loads are placed on the transformer bus sections largest-first onto the le
 Not yet modelled: electrical sharing between sections through the couplers (equal sharing within a set is assumed).
 
 ## Excel report
-The report is **created and downloaded automatically as soon as the load list is dropped** (file name `<input name>_transformer_sizing_<voltage>V.xlsx`). A switch next to the drop area, **Include kW, kvar and power factor** (on by default), controls those columns. "Download Excel report again" re-creates it for the current voltage / rating / number of transformers. The workbook has: Summary (assumptions, totals, recommendation, per-combination summary), Loads, one sheet per transformer combination shown ("2 Transformers", "3 Transformers", and the final added number, e.g. "6 Transformers": ratings checked, distribution and one-out table per set, loads by transformer) and Issues (excluded / error / warning rows).
+The report is **created and downloaded automatically as soon as the load list is dropped** (file name `<input name>_transformer_sizing_<voltage>V.xlsx`). A switch next to the drop area, **Include kW, kvar and power factor** (on by default), controls those columns. "Download Excel report again" re-creates it for the current voltage / rating / number of transformers.
+
+Sheets: **Summary** (assumptions, totals, recommendation, every number of transformers tried), **Original load list** (the uploaded sheet exactly as read), **Loads** (classified loads with kW / kvar / kVA), one sheet per transformer combination shown ("2 Transformers", "3 Transformers", and the final added number, e.g. "6 Transformers": ratings checked, distribution and one-out table per set, loads by transformer) and **Issues** (excluded / error / warning rows, only when there are any).
+
+Formatting: table headers light orange (`#FFE0B2`); cells within their limit light green (`#C6EFCE`); cells over a limit light red (`#FFC7CE`, added so the two states are never confused); thin borders, column widths from the content, frozen header rows on the list sheets, landscape printing. Limits are inclusive (exactly 90 % is within).
 
 ## Interpretations to confirm
 - "With one transformer out, 90 %" is applied as a 90 % limit in the one-out case (confirmed).

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OPTIONS, buildReportBlob, parseLoadSheet, sizeTransformers, type RawLoadRow } from "..";
+import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, parseLoadSheet, sizeTransformers, type RawLoadRow, type ReportCell } from "..";
 
 const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
 const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
@@ -134,5 +134,134 @@ describe("Excel report with sets of transformers", () => {
     const body = five.slice(start + 2);
     expect(body).toHaveLength(60);
     expect([...new Set(body.map((r) => r[0]))].sort()).toEqual(["S1-T1", "S1-T2", "S1-T3", "S2-T1", "S2-T2"]);
+  });
+});
+
+describe("Excel report formatting", () => {
+  const bg = (c: ReportCell) => (c && typeof c === "object" ? c.backgroundColor : undefined);
+  const val = (c: ReportCell) => (c && typeof c === "object" ? c.value : c);
+  const sheetsFor = async (opts = DEFAULT_OPTIONS, volts = 433) => {
+    const raw = await readSheet(buf);
+    const result = sizeTransformers(parseLoadSheet(raw).rows, volts, opts);
+    const sheets = buildReportSheets(result, { transformerLabel: `6600 / ${volts} V`, options: opts, includePower: true, originalSheet: raw });
+    return { raw, result, byName: Object.fromEntries(sheets.map((x) => [x.sheet, x])), names: sheets.map((x) => x.sheet) };
+  };
+
+  it("colours are light orange headers, light green within limit, light red over", () => {
+    expect(REPORT_COLORS.header).toBe("#FFE0B2");
+    expect(REPORT_COLORS.within).toBe("#C6EFCE");
+    expect(REPORT_COLORS.over).toBe("#FFC7CE");
+  });
+
+  it("includes the original load sheet, second, with the values as uploaded", async () => {
+    const { raw, names, byName } = await sheetsFor();
+    expect(names.slice(0, 3)).toEqual(["Summary", "Original load list", "Loads"]);
+    const orig = byName["Original load list"].data;
+    expect(orig).toHaveLength(raw.length);
+    raw.forEach((r, i) => r.forEach((v, j) => {
+      const got = val(orig[i][j]);
+      const want = v === null || v === undefined || v === "" ? null : v;
+      expect(got === "" ? null : got).toEqual(want);
+    }));
+  });
+
+  it("the original sheet survives the round trip through a real .xlsx file", async () => {
+    const raw = await readSheet(buf);
+    const parsed = parseLoadSheet(raw);
+    const result = sizeTransformers(parsed.rows, 433);
+    const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: DEFAULT_OPTIONS, includePower: true, originalSheet: raw });
+    const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((x) => [x.sheet, x.data]));
+    expect(Object.keys(sheets).slice(0, 3)).toEqual(["Summary", "Original load list", "Loads"]);
+    const orig = sheets["Original load list"];
+    expect(orig).toHaveLength(raw.length);
+    expect(orig[0]).toEqual(raw[0]);
+    expect(orig[1]).toEqual(raw[1].map((v) => (v === "" ? null : v)));
+    expect(orig[16]).toEqual(raw[16]); // last row (slurry pump, 690 V) is there too
+  });
+
+  it("every table header is light orange; data cells are not", async () => {
+    const { byName } = await sheetsFor();
+    for (const name of ["Loads", "Original load list", "Issues"]) {
+      const first = byName[name].data[0].filter((c) => val(c) !== null && val(c) !== "");
+      expect(first.length).toBeGreaterThan(3);
+      expect(first.every((c) => bg(c) === REPORT_COLORS.header)).toBe(true);
+      expect(byName[name].stickyRowsCount).toBe(1);
+    }
+    expect(byName["Loads"].data[1].some((c) => bg(c) === REPORT_COLORS.header)).toBe(false);
+    // headers inside the combination sheets
+    const rows = byName["3 Transformers"].data;
+    const headerRows = [
+      rows.find((r) => val(r[0]) === "Rating (kVA)"),
+      rows.find((r) => val(r[0]) === "Transformer" && val(r[1]) === "Loads"),
+      rows.find((r) => val(r[0]) === "Transformer out"),
+      rows.find((r) => val(r[0]) === "Transformer" && val(r[1]) === "Row"), // "Loads by transformer" table
+    ];
+    for (const row of headerRows) {
+      expect(row).toBeDefined();
+      expect(row!.every((c) => bg(c) === REPORT_COLORS.header)).toBe(true);
+    }
+    // Summary block headers and the tried table
+    const sum = byName["Summary"].data;
+    for (const h of ["Assumptions", "Total load", "Recommendation", "Transformers"]) {
+      expect(bg(sum.find((r) => val(r[0]) === h)![0])).toBe(REPORT_COLORS.header);
+    }
+  });
+
+  it("cells within limits are light green (sample: 3 x 2000 kVA is within 80 % / 90 %)", async () => {
+    const { byName } = await sheetsFor();
+    const rows = byName["3 Transformers"].data;
+    // Ratings table: 3 x 2000 -> normal 57.9 %, one out 86.8 %, "Fits"
+    const ratings = rows[rows.findIndex((r) => val(r[0]) === "Rating (kVA)") + 1];
+    expect([ratings[2], ratings[3], ratings[4]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
+    expect(val(ratings[4])).toBe("Fits");
+    // Distribution rows T1..T3: loading and "Within 80 %" green
+    for (const t of ["T1", "T2", "T3"]) {
+      const r = rows.find((x) => val(x[0]) === t && x.length === 7)!;
+      expect(bg(r[5])).toBe(REPORT_COLORS.within);
+      expect(val(r[6])).toBe("Yes");
+      expect(bg(r[6])).toBe(REPORT_COLORS.within);
+    }
+    // One-out rows: 86.8 % <= 90 % -> green OK
+    const oneOutHead = rows.findIndex((r) => val(r[0]) === "Transformer out");
+    for (const r of rows.slice(oneOutHead + 1, oneOutHead + 4)) {
+      expect(bg(r[3])).toBe(REPORT_COLORS.within);
+      expect(val(r[4])).toBe("OK");
+      expect(bg(r[4])).toBe(REPORT_COLORS.within);
+    }
+    // Summary: recommended + the tried table are green
+    const sum = byName["Summary"].data;
+    expect(bg(sum.find((r) => val(r[0]) === "Recommended")![1])).toBe(REPORT_COLORS.within);
+  });
+
+  it("cells over a limit are light red, so the two states are never confused", async () => {
+    // 2 x 2000 kVA forced: 3,471.6 kVA is 86.8 % normal (> 80) and 173.6 % one out (> 90); 3 is added and fits
+    const { byName } = await sheetsFor({ ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] });
+    const sum = byName["Summary"].data;
+    const row2 = sum.find((r) => val(r[0]) === 2 && val(r[1]) === "2")!;
+    expect([row2[3], row2[5], row2[6]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.over, REPORT_COLORS.over]);
+    expect(val(row2[3])).toBe("No");
+    const row3 = sum.find((r) => val(r[0]) === 3 && val(r[1]) === "3")!;
+    expect([row3[3], row3[5], row3[6]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
+    const two = byName["2 Transformers"].data;
+    expect(bg(two[1][0])).toBe(REPORT_COLORS.over); // "DOES NOT FIT"
+    const t1 = two.find((r) => val(r[0]) === "T1" && r.length === 7)!;
+    expect(bg(t1[5])).toBe(REPORT_COLORS.over);
+    expect(val(t1[6])).toBe("No");
+    const oo = two[two.findIndex((r) => val(r[0]) === "Transformer out") + 1];
+    expect(bg(oo[3])).toBe(REPORT_COLORS.over);
+    expect(val(oo[4])).toBe("Over limit");
+    const three = byName["3 Transformers"].data;
+    expect(bg(three[1][0])).toBe(REPORT_COLORS.within);
+  });
+
+  it("a limit is inclusive: exactly 90 % is within", async () => {
+    // 1800 kVA on 2 x 2000 = exactly the 90 % one-out limit
+    const rows: RawLoadRow[] = [{ rowNumber: 2, description: "x", type: "Feeder", voltageV: 433, amps: (1800 * 1000) / (Math.sqrt(3) * 433) }];
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] };
+    const sheets = buildReportSheets(sizeTransformers(rows, 433, opts), { transformerLabel: "x", options: opts, includePower: false });
+    const two = sheets.find((x) => x.sheet === "2 Transformers")!.data;
+    const oo = two[two.findIndex((r) => val(r[0]) === "Transformer out") + 1];
+    expect(val(oo[4])).toBe("OK");
+    expect(bg(oo[4])).toBe(REPORT_COLORS.within);
   });
 });
