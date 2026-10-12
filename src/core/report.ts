@@ -28,7 +28,7 @@ const heads = (...h: string[]): Row => h.map(b);
 function loadHeaders(includePower: boolean, withSection = false): Row {
   return heads(
     ...(withSection ? ["Transformer"] : []),
-    "Row", "Description", "Duty/standby group", "Treated as", "Rated kW (motor)",
+    "Row", "Description", "W/S", "Duty/standby group", "Treated as", "Rated kW (motor)",
     ...(includePower ? ["kW (input)", "kvar", "Power factor"] : []),
     "kVA", "Basis",
   );
@@ -37,7 +37,7 @@ function loadHeaders(includePower: boolean, withSection = false): Row {
 function loadCells(l: SizingResult["loads"][number], includePower: boolean, section?: string): Row {
   return [
     ...(section ? [section] : []),
-    l.rowNumber, l.description, l.group ?? "", l.kind === "feeder" ? "Feeder" : `${l.type} motor`,
+    l.rowNumber, l.description, l.status ?? "", l.group ?? "", l.kind === "feeder" ? "Feeder" : `${l.type} motor`,
     l.ratedKw === undefined ? "" : n(l.ratedKw),
     ...(includePower ? [n(l.kw), n(l.kvar), n(l.powerFactor, "0.00")] : []),
     n(l.kva), l.basis,
@@ -60,19 +60,18 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     ["Max transformer loading, normal running (%)", n(op.normalLimit * 100, "0")],
     ["Max transformer loading, one transformer out (%)", n(op.contingencyLimit * 100, "0")],
     ["Ratings considered (kVA)", [...op.ratingsKva].sort((x, y) => x - y).join(", ")],
-    ["Total kVA basis", op.totalBasis === "vector" ? "Vector sum of kW and kvar" : "Arithmetic sum of load kVA"],
-    ["Load factor", "All loads at 100 % (standby included)"],
+    ["Total kVA basis", "Arithmetic sum of each load's kVA"],
+    ["Load factor", "All loads at 100 % (working W and standby S)"],
     [],
     [b("Total load")],
     ["Loads included", r.loads.length],
+    ["Working (W) / standby (S)", `${r.loads.filter((l) => l.status === "W").length} W / ${r.loads.filter((l) => l.status === "S").length} S`],
     ["Total kVA used for sizing", n(r.totalKva)],
     ...(o.includePower
       ? ([
           ["Total kW (input)", n(r.totals.kw)],
           ["Total kvar", n(r.totals.kvar)],
-          ["Total kVA, arithmetic sum", n(r.totals.kvaArithmetic)],
-          ["Total kVA, vector sum", n(r.totals.kvaVector)],
-          ["Overall power factor (kW ÷ vector kVA)", n(r.totals.powerFactor, "0.00")],
+          ["Overall power factor (kW ÷ √(kW² + kvar²))", n(r.totals.powerFactor, "0.00")],
         ] as Row[])
       : []),
     [],
@@ -93,11 +92,11 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
 
 function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
   const rows: Row[] = [loadHeaders(o.includePower), ...r.loads.map((l) => loadCells(l, o.includePower))];
-  rows.push([null, b("Total"), null, null, null, ...(o.includePower ? [n(r.totals.kw), n(r.totals.kvar), n(r.totals.powerFactor, "0.00")] : []), n(r.totalKva)]);
+  rows.push([null, b("Total"), null, null, null, null, ...(o.includePower ? [n(r.totals.kw), n(r.totals.kvar), n(r.totals.powerFactor, "0.00")] : []), n(r.totalKva)]);
   return {
     sheet: "Loads",
     data: rows,
-    columns: [{ width: 7 }, { width: 38 }, { width: 18 }, { width: 14 }, { width: 16 }, ...(o.includePower ? [{ width: 12 }, { width: 12 }, { width: 12 }] : []), { width: 12 }, { width: 44 }],
+    columns: [{ width: 7 }, { width: 38 }, { width: 6 }, { width: 18 }, { width: 14 }, { width: 16 }, ...(o.includePower ? [{ width: 12 }, { width: 12 }, { width: 12 }] : []), { width: 12 }, { width: 44 }],
     stickyRowsCount: 1,
   };
 }
@@ -134,7 +133,7 @@ function comboSheet(c: ComboResult, r: SizingResult, o: ReportOptions): ReportSh
   return {
     sheet: `${c.count} Transformers`,
     data,
-    columns: [{ width: 20 }, { width: 22 }, { width: 38 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 44 }],
+    columns: [{ width: 20 }, { width: 22 }, { width: 38 }, { width: 8 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 44 }],
   };
 }
 

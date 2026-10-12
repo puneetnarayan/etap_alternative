@@ -33,12 +33,15 @@ export interface SizingOptions {
   totalBasis: "arithmetic" | "vector";
 }
 
+/** Standard transformer ratings offered in the UI (kVA). */
+export const STANDARD_RATINGS_KVA = [2000, 2500, 4000];
+
 export const DEFAULT_OPTIONS: SizingOptions = {
   efficiency: 0.95,
   powerFactor: { DOL: 0.7, VFD: 0.9, FEEDER: 0.7 },
   normalLimit: 0.8,
   contingencyLimit: 0.9,
-  ratingsKva: [2000, 2500, 4000],
+  ratingsKva: STANDARD_RATINGS_KVA,
   counts: [2, 3],
   stepUp: "min-installed",
   totalBasis: "arithmetic",
@@ -60,6 +63,10 @@ export interface RawLoadRow {
   kw?: number;
   /** Volts. */
   voltageV?: number;
+  /** Working (W) or standby (S), from the optional Working/Standby column. */
+  status?: "W" | "S";
+  /** Raw text of a Working/Standby cell that could not be read as W or S. */
+  statusText?: string;
   /** Optional duty/standby group: loads with the same group name are put on different transformer sections. */
   group?: string;
   /** Set when a numeric cell could not be read (e.g. text in the Amps column). */
@@ -72,6 +79,7 @@ export interface SizedLoad {
   kind: "motor" | "feeder";
   type: LoadType;
   voltageV: number;
+  status?: "W" | "S";
   /** Motor rating as given in the load list (shaft kW). Undefined for amps-only loads. */
   ratedKw?: number;
   /** Electrical input kW (motors: rated kW ÷ efficiency), so that kVA² = kW² + kvar². */
@@ -118,6 +126,7 @@ export function sizeLoad(
     issue: { rowNumber: row.rowNumber, description: row.description, severity, message },
   });
   const warnings: string[] = [];
+  if (row.statusText) warnings.push(`Working/standby value "${row.statusText}" not recognised (use W or S).`);
 
   if (row.badFields?.length) return fail("error", `Could not read a number in: ${row.badFields.join(", ")}.`);
   if (row.kw !== undefined && !(row.kw > 0)) return fail("error", "kW must be greater than 0.");
@@ -161,6 +170,7 @@ export function sizeLoad(
         powerFactor: pf,
         basis: `kW ÷ (pf ${pf} × η ${opts.efficiency})`,
         group: row.group,
+        status: row.status,
         warnings,
       },
     };
@@ -187,6 +197,7 @@ export function sizeLoad(
       powerFactor: pf,
       basis: `√3 × ${voltageV} V × ${amps} A (kW shown at pf ${pf})`,
       group: row.group,
+      status: row.status,
       warnings,
     },
   };
@@ -449,6 +460,15 @@ export function parseVoltage(c: Cell): { value?: number; bad: boolean } {
   return { value: isKv || n.value < 10 ? n.value * 1000 : n.value, bad: false };
 }
 
+/** "W", "Working", "Duty" -> W; "S", "Standby", "Stand-by" -> S. */
+export function parseStatus(c: Cell): { status?: "W" | "S"; unrecognised?: string } {
+  if (blank(c)) return {};
+  const t = String(c).toLowerCase().replace(/[^a-z]/g, "");
+  if (["w", "working", "work", "duty", "run", "running"].includes(t)) return { status: "W" };
+  if (["s", "standby", "stby", "sb"].includes(t)) return { status: "S" };
+  return { unrecognised: String(c).trim() };
+}
+
 const norm = (h: Cell) => String(h ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export interface ParsedSheet {
@@ -462,7 +482,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
   const headerIdx = data.findIndex((r) => r.some((c) => !blank(c)));
   if (headerIdx < 0) return { rows: [], errors: ["The sheet is empty."] };
 
-  const cols: Partial<Record<"description" | "type" | "voltage" | "amps" | "kw" | "group", number>> = {};
+  const cols: Partial<Record<"description" | "type" | "voltage" | "amps" | "kw" | "group" | "status", number>> = {};
   data[headerIdx].forEach((h, i) => {
     const n = norm(h);
     if (!n) return;
@@ -472,6 +492,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
     else if (n.includes("amp")) cols.amps ??= i;
     else if (n.includes("kw")) cols.kw ??= i;
     else if (n.includes("group") || n.includes("pair")) cols.group ??= i;
+    else if (n.includes("working") || n.includes("standby") || n.includes("duty") || n === "ws") cols.status ??= i;
   });
 
   const missing = (["description", "type", "amps", "kw", "voltage"] as const).filter((k) => cols[k] === undefined);
@@ -495,6 +516,7 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
     if (amps.bad) badFields.push("Amps");
     if (kw.bad) badFields.push("kW");
     if (volt.bad) badFields.push("Voltage");
+    const status = cols.status !== undefined ? parseStatus(line[cols.status]) : {};
     rows.push({
       rowNumber: r + 1,
       description: String(line[cols.description!] ?? "").trim(),
@@ -502,6 +524,8 @@ export function parseLoadSheet(data: Cell[][]): ParsedSheet {
       amps: amps.value,
       kw: kw.value,
       voltageV: volt.value,
+      status: status.status,
+      statusText: status.unrecognised,
       group: cols.group !== undefined && !blank(line[cols.group]) ? String(line[cols.group]).trim() : undefined,
       badFields: badFields.length ? badFields : undefined,
     });
