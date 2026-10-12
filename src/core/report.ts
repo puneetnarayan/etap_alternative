@@ -1,5 +1,5 @@
 import writeExcelFile from "write-excel-file/universal";
-import type { ComboResult, SizingOptions, SizingResult } from "./transformer-sizing";
+import { displayCombos, type ComboResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
 
 type Cell = null | string | number | { value: string | number; fontWeight?: "bold"; format?: string };
 type Row = Cell[];
@@ -77,17 +77,18 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     [],
     [b("Recommendation")],
     rec
-      ? ["Recommended", `${rec.count} × ${rec.ratingKva} kVA`]
+      ? ["Recommended", `${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (sets of ${rec.layout.join(" + ")})` : ""}`]
       : ["Recommended", "No configuration fits the ratings considered"],
-    ...(rec ? ([["Incomers", rec.count], ["Bus couplers", rec.count - 1]] as Row[]) : []),
+    ...(rec ? ([["Incomers", rec.count], ["Bus couplers", rec.count - rec.layout.length]] as Row[]) : []),
     [],
-    [b("By number of transformers")],
-    heads("Transformers", "Rating (kVA)", "Fits", "Normal loading (%)", "One out loading (%)"),
+    [b("Numbers of transformers tried")],
+    heads("Transformers", "Sets", "Rating (kVA)", "Fits", "Max load (kVA)", "Average normal loading (%)", "One out loading (%)"),
     ...r.combos.map((c): Row => [
-      c.count, c.chosen.ratingKva, c.fits ? "Yes" : "No", n(c.chosen.normalPct), n(c.chosen.contingencyPct),
+      c.count, c.layout.join(" + "), c.chosen.ratingKva, c.fits ? "Yes" : "No",
+      n(c.chosen.maxLoadKva), n(c.chosen.normalPct), n(c.chosen.contingencyPct),
     ]),
   ];
-  return { sheet: "Summary", data, columns: [{ width: 48 }, { width: 34 }, { width: 14 }, { width: 20 }, { width: 20 }] };
+  return { sheet: "Summary", data, columns: [{ width: 48 }, { width: 34 }, { width: 14 }, { width: 10 }, { width: 16 }, { width: 26 }, { width: 20 }] };
 }
 
 function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
@@ -101,31 +102,38 @@ function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
   };
 }
 
-function comboSheet(c: ComboResult, r: SizingResult, o: ReportOptions): ReportSheet {
+function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
   const op = o.options;
+  const multi = c.sets.length > 1;
+  const chain = (names: string[]) => names.join(" – coupler – ");
+  const layoutLine = multi
+    ? `${c.incomers} incomers, ${c.couplers} bus couplers, in ${c.sets.length} independent sets (${c.layout.join(" + ")}); one coupler between neighbouring incomers in a set, none between sets. ${c.sets.map((s) => `Set ${s.index}: ${chain(s.sections.map((x) => x.name))}`).join("; ")}`
+    : `${c.incomers} incomers, ${c.couplers} bus coupler${c.couplers === 1 ? "" : "s"}; bus sections in a line: ${chain(c.sections.map((s) => s.name))}`;
   const data: Row[] = [
     [b(`${c.count} × ${c.chosen.ratingKva} kVA transformers, ${o.transformerLabel}`)],
     [c.fits ? "Fits within both limits" : b("DOES NOT FIT within both limits")],
     ...(c.added ? ([["Added because the selected number of transformers did not fit."]] as Row[]) : []),
-    [`${c.incomers} incomers, ${c.couplers} bus coupler${c.couplers === 1 ? "" : "s"}; bus sections in a line: ${c.sections.map((s) => s.name).join(" – coupler – ")}`],
+    [layoutLine],
     [],
     [b("Ratings considered")],
-    heads("Rating (kVA)", "Installed kVA", "Normal loading (%)", "One out loading (%)", "Result"),
+    heads("Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result"),
     ...c.candidates.map((x): Row => [
       x.ratingKva, x.installedKva, n(x.normalPct), n(x.contingencyPct),
       x.fits ? "Fits" : `Over limit (${[!x.normalOk && "normal", !x.contingencyOk && "one out"].filter(Boolean).join(" + ")})`,
     ]),
     [],
-    [b("Load distribution (normal running)")],
-    heads("Transformer", "Loads", ...(o.includePower ? ["kW (input)", "kvar"] : []), "kVA", "Loading (%)", `Within ${op.normalLimit * 100} %`),
-    ...c.sections.map((s): Row => [
-      s.name, s.loads.length, ...(o.includePower ? [n(s.kw), n(s.kvar)] : []), n(s.kva), n(s.loadingPct), s.withinNormalLimit ? "Yes" : "No",
+    ...c.sets.flatMap((set): Row[] => [
+      [b(multi ? `Set ${set.index}: ${set.size} transformers, load ${set.kva.toFixed(1)} kVA (limit ${set.capacityKva.toFixed(1)} kVA)` : "Load distribution (normal running)")],
+      heads("Transformer", "Loads", ...(o.includePower ? ["kW (input)", "kvar"] : []), "kVA", "Loading (%)", `Within ${op.normalLimit * 100} %`),
+      ...set.sections.map((s): Row => [
+        s.name, s.loads.length, ...(o.includePower ? [n(s.kw), n(s.kvar)] : []), n(s.kva), n(s.loadingPct), s.withinNormalLimit ? "Yes" : "No",
+      ]),
+      [],
+      [b(`One transformer out${multi ? ` in set ${set.index}` : ""} (each remaining unit limited to ${op.contingencyLimit * 100} %)`)],
+      heads("Transformer out", "Load moved (kVA)", "Each remaining (kVA)", "Loading (%)", "Result"),
+      ...set.oneOut.map((s): Row => [s.outName, n(s.movedKva), n(s.eachKva), n(s.loadingPct), s.ok ? "OK" : "Over limit"]),
+      [],
     ]),
-    [],
-    [b(`One transformer out (each remaining unit limited to ${op.contingencyLimit * 100} %)`)],
-    heads("Transformer out", "Load moved (kVA)", "Each remaining (kVA)", "Loading (%)", "Result"),
-    ...c.oneOut.map((s): Row => [s.outName, n(s.movedKva), n(s.eachKva), n(s.loadingPct), s.ok ? "OK" : "Over limit"]),
-    [],
     ...(c.notes.length ? ([[b("Notes")], ...c.notes.map((t): Row => [t]), []] as Row[]) : []),
     [b("Loads by transformer")],
     loadHeaders(o.includePower, true),
@@ -155,7 +163,7 @@ export function buildReportSheets(result: SizingResult, o: ReportOptions): Repor
   return [
     summarySheet(result, o),
     loadsSheet(result, o),
-    ...result.combos.map((c) => comboSheet(c, result, o)),
+    ...displayCombos(result).map((c) => comboSheet(c, o)),
     ...(result.issues.length > 0 ? [issuesSheet(result)] : []),
   ];
 }
