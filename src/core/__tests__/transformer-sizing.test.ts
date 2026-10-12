@@ -527,7 +527,8 @@ describe("real load balancing decides whether a number of transformers fits", ()
     const r = sizeTransformers(kvaRows([1700, 300]), 433, only2000);
     expect(r.blockers).toHaveLength(1);
     expect(r.blockers[0]).toContain("L0");
-    expect(r.blockers[0]).toContain("1600.0 kVA");
+    expect(r.blockers[0]).toContain("1,700 kVA");
+    expect(r.blockers[0]).toContain("1,600 kVA"); // whole numbers; only percentages have a decimal
     expect(r.recommended).toBeUndefined();
     expect(r.combos.map((c) => c.count)).toEqual([3]); // nothing added: it would never help
     // a larger rating makes it placeable: 80 % of 2500 = 2000 kVA

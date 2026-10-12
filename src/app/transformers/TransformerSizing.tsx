@@ -5,15 +5,39 @@ import { readSheet } from "read-excel-file/universal";
 import {
   DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
   sizeTransformers,
-  failureReason, type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
+  REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
+  type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
 } from "@/core";
 
-const th = { padding: "4px 10px", borderBottom: "1px solid #888", textAlign: "right" as const, whiteSpace: "nowrap" as const };
-const td = { padding: "4px 10px", textAlign: "right" as const };
+// Tables follow the Excel report: light orange headers, thin borders, numbers and percentages centred,
+// green / red for within / over a limit, pastels for W, S, DOL, VFD and Feeder.
+// Numbers: only percentages have a decimal place; everything else is whole (power factor keeps two decimals).
+const BORDER = `1px solid ${REPORT_COLORS.border}`;
+const th = {
+  padding: "4px 10px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const,
+  textAlign: "center" as const, whiteSpace: "nowrap" as const,
+};
+const td = { padding: "4px 10px", border: BORDER, textAlign: "center" as const };
 const left = { textAlign: "left" as const };
-const fmt = (n: number, d = 1) => n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const GOOD = "rgba(40,160,70,0.18)";
+const shade = (background: string) => ({ background, color: "#000" });
+const withinColor = (ok: boolean) => (ok ? REPORT_COLORS.within : REPORT_COLORS.over);
+/** A centred cell shaded green when the value is within its limit (inclusive), light red when over. */
+const limitCell = (value: number, limitPct: number) => ({ ...td, ...shade(withinColor(value <= limitPct + 1e-9)) });
+/** A centred verdict cell (fits / OK / within) shaded green or light red. */
+const verdictCell = (ok: boolean) => ({ ...td, ...shade(withinColor(ok)) });
+/** A cell shaded with the pastel for a W / S / DOL / VFD / Feeder value, if it has one. */
+const kindCell = (value: string, align: "center" | "left" = "left") => {
+  const bg = kindColor(value);
+  return { ...td, textAlign: align, ...(bg ? shade(bg) : {}) };
+};
+const GOOD = REPORT_COLORS.within;
 const BAD = "crimson";
+
+/** W / S tag shown inside lists. */
+function Tag({ value }: { value: string }) {
+  const bg = kindColor(value);
+  return <span style={{ ...(bg ? shade(bg) : {}), padding: "0 5px", borderRadius: 3, border: BORDER }}>{value}</span>;
+}
 
 type Combination = "3" | "2";
 type ReportStatus = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string } | { kind: "error"; message: string };
@@ -166,7 +190,7 @@ export default function TransformerSizing() {
           <legend>Transformer rating</legend>
           {STANDARD_RATINGS_KVA.map((r) => (
             <label key={r} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
-              <input type="radio" name="rating" checked={rating === r} onChange={() => setRating(r)} /> {fmt(r, 0)} kVA
+              <input type="radio" name="rating" checked={rating === r} onChange={() => setRating(r)} /> {fmtInt(r)} kVA
             </label>
           ))}
         </fieldset>
@@ -193,7 +217,7 @@ export default function TransformerSizing() {
           <label>Power factor feeder <input style={{ width: 60 }} value={pfFeeder} onChange={(e) => setPfFeeder(e.target.value)} /></label>
         </div>
         <p style={{ margin: "4px 0" }}>
-          Fixed: maximum loading {fmt(DEFAULT_OPTIONS.normalLimit * 100, 0)} % in normal running and {fmt(DEFAULT_OPTIONS.contingencyLimit * 100, 0)} % on each remaining
+          Fixed: maximum loading {fmtPct(DEFAULT_OPTIONS.normalLimit * 100)} % in normal running and {fmtPct(DEFAULT_OPTIONS.contingencyLimit * 100)} % on each remaining
           transformer with one out. Total kVA is the sum of each load&apos;s kVA. All loads count at 100 %, working (W) and standby (S) alike.
         </p>
       </details>
@@ -220,6 +244,8 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
   const warnings = result.issues.filter((i) => i.severity === "warning");
   const t = result.totals;
   const sets = recCombo?.layout.length ?? 1;
+  const normalPct = fmtPct(opts.normalLimit * 100);
+  const contPct = fmtPct(opts.contingencyLimit * 100);
 
   return (
     <div>
@@ -228,9 +254,9 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
         <p role="alert" style={{ color: BAD }}>No usable loads at {result.selectedVoltageV} V in this file.</p>
       ) : (
         <>
-          <div style={{ background: rec ? GOOD : undefined, padding: "12px 16px", borderRadius: 8, border: rec ? undefined : `1px solid ${BAD}` }}>
+          <div style={{ ...(rec ? shade(GOOD) : {}), padding: "12px 16px", borderRadius: 8, border: rec ? undefined : `1px solid ${BAD}` }}>
             {rec ? (
-              <div style={{ fontSize: 20 }}><b>{rec.count} × {fmt(rec.ratingKva, 0)} kVA</b> transformers{layoutText(rec)}, {tx}</div>
+              <div style={{ fontSize: 20 }}><b>{rec.count} × {fmtInt(rec.ratingKva)} kVA</b> transformers{layoutText(rec)}, {tx}</div>
             ) : (
               <div role="alert" style={{ color: BAD, fontSize: 18 }}>
                 {result.blockers.length > 0 ? (
@@ -239,21 +265,21 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
                     <ul style={{ margin: "4px 0", fontSize: 15 }}>{result.blockers.map((m, i) => <li key={i}>{m}</li>)}</ul>
                   </>
                 ) : (
-                  <>No configuration fits: with up to {opts.maxTransformers} transformers of {fmt(opts.ratingsKva[0], 0)} kVA the loads (total {fmt(result.totalKva)} kVA) cannot be balanced within the limits.</>
+                  <>No configuration fits: with up to {opts.maxTransformers} transformers of {fmtInt(opts.ratingsKva[0])} kVA the loads (total {fmtInt(result.totalKva)} kVA) cannot be balanced within the limits.</>
                 )}
                 {alternative
-                  ? <> It would fit with <b>{alternative.count} × {fmt(alternative.ratingKva, 0)} kVA</b>{layoutText(alternative)}.</>
+                  ? <> It would fit with <b>{alternative.count} × {fmtInt(alternative.ratingKva)} kVA</b>{layoutText(alternative)}.</>
                   : <> No standard rating fits within {opts.maxTransformers} transformers.</>}
               </div>
             )}
             <div>
-              Total load <b>{fmt(result.totalKva)} kVA</b> · {fmt(t.kw)} kW · {fmt(t.kvar)} kvar · power factor {fmt(t.powerFactor, 2)}
+              Total load <b>{fmtInt(result.totalKva)} kVA</b> · {fmtInt(t.kw)} kW · {fmtInt(t.kvar)} kvar · power factor {fmtPf(t.powerFactor)}
             </div>
             {rec && recCombo && (
               <div>
                 {recCombo.incomers} incomers, {recCombo.couplers} bus coupler{recCombo.couplers === 1 ? "" : "s"}
-                {sets > 1 ? ` in ${sets} independent sets` : ""}. Shared equally: {fmt(rec.normalPct)} % {sets > 1 ? "on average " : "each "}in normal running
-                (limit {fmt(opts.normalLimit * 100, 0)} %); with one out, {fmt(rec.contingencyPct)} % each on the remaining {sets > 1 ? "transformers of that set" : `${rec.count - 1}`} (limit {fmt(opts.contingencyLimit * 100, 0)} %).
+                {sets > 1 ? ` in ${sets} independent sets` : ""}. Shared equally: {fmtPct(rec.normalPct)} % {sets > 1 ? "on average " : "each "}in normal running
+                (limit {normalPct} %); with one out, {fmtPct(rec.contingencyPct)} % each on the remaining {sets > 1 ? "transformers of that set" : `${rec.count - 1}`} (limit {contPct} %).
               </div>
             )}
           </div>
@@ -263,7 +289,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
             </button>
             <span> for the current settings (voltage, rating, number of transformers).</span>
           </div>
-          {result.combos.some((c) => c.added) && <Tried combos={result.combos} recommendedCount={rec?.count} />}
+          {result.combos.some((c) => c.added) && <Tried combos={result.combos} recommendedCount={rec?.count} opts={opts} />}
           {displayCombos(result).map((c) => <Combo key={c.count} combo={c} recommended={rec?.count === c.count} opts={opts} tx={tx} />)}
         </>
       )}
@@ -274,24 +300,28 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse" }}>
               <thead><tr>
-                <th style={th}>Row</th><th style={{ ...th, ...left }}>Description</th><th style={th}>W/S</th><th style={{ ...th, ...left }}>Group</th>
-                <th style={{ ...th, ...left }}>Treated as</th><th style={th}>Rated kW</th><th style={th}>kW (input)</th><th style={th}>kvar</th>
-                <th style={th}>pf</th><th style={th}>kVA</th><th style={{ ...th, ...left }}>Basis</th>
+                <th style={th}>Row</th><th style={th}>Description</th><th style={th}>W/S</th><th style={th}>Group</th>
+                <th style={th}>Treated as</th><th style={th}>Rated kW</th><th style={th}>kW (input)</th><th style={th}>kvar</th>
+                <th style={th}>Power factor</th><th style={th}>kVA</th><th style={th}>Basis</th>
               </tr></thead>
               <tbody>
-                {result.loads.map((l) => (
-                  <tr key={l.rowNumber}>
-                    <td style={td}>{l.rowNumber}</td><td style={{ ...td, ...left }}>{l.description}</td><td style={td}>{l.status ?? ""}</td><td style={{ ...td, ...left }}>{l.group ?? ""}</td>
-                    <td style={{ ...td, ...left }}>{l.kind === "feeder" ? "Feeder" : `${l.type} motor`}</td>
-                    <td style={td}>{l.ratedKw === undefined ? "" : fmt(l.ratedKw)}</td>
-                    <td style={td}>{fmt(l.kw)}</td><td style={td}>{fmt(l.kvar)}</td><td style={td}>{fmt(l.powerFactor, 2)}</td>
-                    <td style={td}>{fmt(l.kva)}</td><td style={{ ...td, ...left }}>{l.basis}</td>
-                  </tr>
-                ))}
+                {result.loads.map((l) => {
+                  const treated = l.kind === "feeder" ? "Feeder" : `${l.type} motor`;
+                  return (
+                    <tr key={l.rowNumber}>
+                      <td style={td}>{l.rowNumber}</td><td style={{ ...td, ...left }}>{l.description}</td>
+                      <td style={kindCell(l.status ?? "", "center")}>{l.status ?? ""}</td><td style={{ ...td, ...left }}>{l.group ?? ""}</td>
+                      <td style={kindCell(treated)}>{treated}</td>
+                      <td style={td}>{l.ratedKw === undefined ? "" : fmtInt(l.ratedKw)}</td>
+                      <td style={td}>{fmtInt(l.kw)}</td><td style={td}>{fmtInt(l.kvar)}</td><td style={td}>{fmtPf(l.powerFactor)}</td>
+                      <td style={td}>{fmtInt(l.kva)}</td><td style={{ ...td, ...left }}>{l.basis}</td>
+                    </tr>
+                  );
+                })}
                 <tr>
-                  <td style={td} /><td style={{ ...td, ...left }}><b>Total</b></td><td /><td /><td /><td />
-                  <td style={td}><b>{fmt(t.kw)}</b></td><td style={td}><b>{fmt(t.kvar)}</b></td><td style={td}><b>{fmt(t.powerFactor, 2)}</b></td>
-                  <td style={td}><b>{fmt(result.totalKva)}</b></td><td />
+                  <td style={td} /><td style={{ ...td, ...left }}><b>Total</b></td><td style={td} /><td style={td} /><td style={td} /><td style={td} />
+                  <td style={td}><b>{fmtInt(t.kw)}</b></td><td style={td}><b>{fmtInt(t.kvar)}</b></td><td style={td}><b>{fmtPf(t.powerFactor)}</b></td>
+                  <td style={td}><b>{fmtInt(result.totalKva)}</b></td><td style={td} />
                 </tr>
               </tbody>
             </table>
@@ -310,21 +340,23 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
 }
 
 /** Every number of transformers tried, in one compact table. */
-function Tried({ combos, recommendedCount }: { combos: ComboResult[]; recommendedCount?: number }) {
+function Tried({ combos, recommendedCount, opts }: { combos: ComboResult[]; recommendedCount?: number; opts: SizingOptions }) {
   return (
     <div style={{ overflowX: "auto", margin: "12px 0" }}>
       <table style={{ borderCollapse: "collapse" }}>
         <caption style={{ textAlign: "left" }}><b>Numbers of transformers tried</b> (more were added because the loads could not be balanced within the limits)</caption>
         <thead><tr>
-          <th style={th}>Transformers</th><th style={{ ...th, ...left }}>Sets</th><th style={th}>Max load kVA</th>
-          <th style={th}>Avg normal %</th><th style={th}>One out %</th><th style={{ ...th, ...left }}>Result</th>
+          <th style={th}>Transformers</th><th style={th}>Sets</th><th style={th}>Max load (kVA)</th>
+          <th style={th}>Average normal loading (%)</th><th style={th}>One out loading (%)</th><th style={th}>Result</th>
         </tr></thead>
         <tbody>
           {combos.map((c) => (
-            <tr key={c.count} style={{ background: c.count === recommendedCount ? GOOD : undefined }}>
-              <td style={td}>{c.count}</td><td style={{ ...td, ...left }}>{c.layout.join(" + ")}</td>
-              <td style={td}>{fmt(c.chosen.maxLoadKva, 0)}</td><td style={td}>{fmt(c.chosen.normalPct)}</td><td style={td}>{fmt(c.chosen.contingencyPct)}</td>
-              <td style={{ ...td, ...left }}>{c.fits ? (c.count === recommendedCount ? "✔ recommended" : "✔ fits") : `✘ ${failureReason(c.chosen)}`}</td>
+            <tr key={c.count}>
+              <td style={td}>{c.count}</td><td style={td}>{c.layout.join(" + ")}</td>
+              <td style={td}>{fmtInt(c.chosen.maxLoadKva)}</td>
+              <td style={limitCell(c.chosen.normalPct, opts.normalLimit * 100)}>{fmtPct(c.chosen.normalPct)}</td>
+              <td style={limitCell(c.chosen.contingencyPct, opts.contingencyLimit * 100)}>{fmtPct(c.chosen.contingencyPct)}</td>
+              <td style={verdictCell(c.fits)}>{c.fits ? (c.count === recommendedCount ? "✔ recommended" : "✔ fits") : `✘ ${failureReason(c.chosen)}`}</td>
             </tr>
           ))}
         </tbody>
@@ -336,11 +368,13 @@ function Tried({ combos, recommendedCount }: { combos: ComboResult[]; recommende
 function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recommended: boolean; opts: SizingOptions; tx: string }) {
   const multi = c.sets.length > 1;
   const chain = (names: string[]) => names.join(" — coupler — ");
+  const normalLimit = opts.normalLimit * 100;
+  const contLimit = opts.contingencyLimit * 100;
   return (
     <section style={{ border: `1px solid ${recommended ? "rgb(40,160,70)" : "#888"}`, borderRadius: 8, padding: "4px 16px 12px", margin: "16px 0" }}>
       <h4 style={{ marginBottom: 4 }}>
-        {c.count} transformers{layoutText(c)}: {c.fits ? <>{fmt(c.chosen.ratingKva, 0)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmt(c.chosen.ratingKva, 0)} kVA shown)</span>}
-        {recommended && <span style={{ background: GOOD, borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>recommended</span>}
+        {c.count} transformers{layoutText(c)}: {c.fits ? <>{fmtInt(c.chosen.ratingKva)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmtInt(c.chosen.ratingKva)} kVA shown)</span>}
+        {recommended && <span style={{ ...shade(GOOD), borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>recommended</span>}
         {c.added && <span style={{ border: "1px solid #888", borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>added: fewer could not be balanced</span>}
       </h4>
       <p style={{ margin: "4px 0" }}>
@@ -354,16 +388,15 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
         <table style={{ borderCollapse: "collapse" }}>
           <caption style={{ textAlign: "left" }}><b>Rating checked</b></caption>
           <thead><tr>
-            <th style={{ ...th, ...left }}>Rating</th><th style={th}>Installed kVA</th><th style={th}>{multi ? "Avg normal %" : "Normal %"}</th><th style={th}>One out %</th><th style={{ ...th, ...left }}>Result</th>
+            <th style={th}>Rating</th><th style={th}>Installed kVA</th><th style={th}>{multi ? "Average normal loading (%)" : "Normal loading (%)"}</th><th style={th}>One out loading (%)</th><th style={th}>Result</th>
           </tr></thead>
           <tbody>
             {c.candidates.map((x) => (
-              <tr key={x.ratingKva} style={{ background: x.ratingKva === c.chosen.ratingKva && c.fits ? GOOD : undefined }}>
-                <td style={{ ...td, ...left }}>{c.count} × {fmt(x.ratingKva, 0)} kVA</td><td style={td}>{fmt(x.installedKva, 0)}</td>
-                <td style={td}>{fmt(x.normalPct)}</td><td style={td}>{fmt(x.contingencyPct)}</td>
-                <td style={{ ...td, ...left }}>
-                  {x.fits ? "✔ fits" : `✘ ${failureReason(x)}`}
-                </td>
+              <tr key={x.ratingKva}>
+                <td style={td}>{c.count} × {fmtInt(x.ratingKva)} kVA</td><td style={td}>{fmtInt(x.installedKva)}</td>
+                <td style={limitCell(x.normalPct, normalLimit)}>{fmtPct(x.normalPct)}</td>
+                <td style={limitCell(x.contingencyPct, contLimit)}>{fmtPct(x.contingencyPct)}</td>
+                <td style={verdictCell(x.fits)}>{x.fits ? "✔ fits" : `✘ ${failureReason(x)}`}</td>
               </tr>
             ))}
           </tbody>
@@ -375,30 +408,34 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
           {multi && (
             <h5 style={{ margin: "8px 0 4px" }}>
               Set {set.index}: {set.size} transformers, {set.incomers} incomers, {set.couplers} bus coupler{set.couplers === 1 ? "" : "s"} ({chain(set.sections.map((s) => s.name))}) ·
-              load {fmt(set.kva)} kVA, limit {fmt(set.capacityKva)} kVA
+              load {fmtInt(set.kva)} kVA, limit {fmtInt(set.capacityKva)} kVA
             </h5>
           )}
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse" }}>
-              <caption style={{ textAlign: "left" }}><b>Load distribution, normal running</b> (limit {fmt(opts.normalLimit * 100, 0)} %)</caption>
+              <caption style={{ textAlign: "left" }}><b>Load distribution, normal running</b> (limit {fmtPct(normalLimit)} %)</caption>
               <thead><tr>
-                <th style={{ ...th, ...left }}>Transformer / bus section</th><th style={th}>Loads</th><th style={th}>kW</th><th style={th}>kvar</th>
-                <th style={th}>kVA</th><th style={th}>Loading %</th><th style={{ ...th, ...left }}>Normal limit</th>
+                <th style={th}>Transformer / bus section</th><th style={th}>Loads</th><th style={th}>kW</th><th style={th}>kvar</th>
+                <th style={th}>kVA</th><th style={th}>Loading (%)</th><th style={th}>Normal limit</th>
               </tr></thead>
               <tbody>
                 {set.sections.map((s) => (
                   <tr key={s.name}>
                     <td style={{ ...td, ...left }}>
-                      <details><summary>{s.name} ({fmt(c.chosen.ratingKva, 0)} kVA)</summary>
-                        <ul style={{ margin: "4px 0" }}>
-                          {s.loads.map((l) => <li key={l.rowNumber}>{l.description || `Row ${l.rowNumber}`}{l.status ? ` (${l.status})` : ""}{l.group ? ` [${l.group}]` : ""} – {fmt(l.kva)} kVA</li>)}
+                      <details><summary>{s.name} ({fmtInt(c.chosen.ratingKva)} kVA)</summary>
+                        <ul style={{ margin: "4px 0", textAlign: "left" }}>
+                          {s.loads.map((l) => (
+                            <li key={l.rowNumber}>
+                              {l.description || `Row ${l.rowNumber}`} {l.status && <Tag value={l.status} />}{l.group ? ` [${l.group}]` : ""} – {fmtInt(l.kva)} kVA
+                            </li>
+                          ))}
                         </ul>
                       </details>
                     </td>
                     <td style={td}>{s.loads.length} ({s.loads.filter((l) => l.status === "W").length} W, {s.loads.filter((l) => l.status === "S").length} S)</td>
-                    <td style={td}>{fmt(s.kw)}</td><td style={td}>{fmt(s.kvar)}</td>
-                    <td style={td}>{fmt(s.kva)}</td><td style={td}>{fmt(s.loadingPct)}</td>
-                    <td style={{ ...td, ...left }}>{s.withinNormalLimit ? "✔ within" : "✘ over"}</td>
+                    <td style={td}>{fmtInt(s.kw)}</td><td style={td}>{fmtInt(s.kvar)}</td>
+                    <td style={td}>{fmtInt(s.kva)}</td><td style={limitCell(s.loadingPct, normalLimit)}>{fmtPct(s.loadingPct)}</td>
+                    <td style={verdictCell(s.withinNormalLimit)}>{s.withinNormalLimit ? "✔ within" : "✘ over"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -407,15 +444,16 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
 
           <div style={{ overflowX: "auto", marginTop: 12 }}>
             <table style={{ borderCollapse: "collapse" }}>
-              <caption style={{ textAlign: "left" }}><b>One transformer out</b> (remaining units {multi ? "of the set " : ""}share the load; limit {fmt(opts.contingencyLimit * 100, 0)} %)</caption>
+              <caption style={{ textAlign: "left" }}><b>One transformer out</b> (remaining units {multi ? "of the set " : ""}share the load; limit {fmtPct(contLimit)} %)</caption>
               <thead><tr>
-                <th style={{ ...th, ...left }}>Out</th><th style={th}>Its bus load kVA</th><th style={th}>Each remaining kVA</th><th style={th}>Loading %</th><th style={{ ...th, ...left }}>Result</th>
+                <th style={th}>Out</th><th style={th}>Its bus load (kVA)</th><th style={th}>Each remaining (kVA)</th><th style={th}>Loading (%)</th><th style={th}>Result</th>
               </tr></thead>
               <tbody>
                 {set.oneOut.map((s) => (
                   <tr key={s.outName}>
-                    <td style={{ ...td, ...left }}>{s.outName}</td><td style={td}>{fmt(s.movedKva)}</td><td style={td}>{fmt(s.eachKva)}</td>
-                    <td style={td}>{fmt(s.loadingPct)}</td><td style={{ ...td, ...left }}>{s.ok ? "✔ OK" : "✘ over limit"}</td>
+                    <td style={{ ...td, ...left }}>{s.outName}</td><td style={td}>{fmtInt(s.movedKva)}</td><td style={td}>{fmtInt(s.eachKva)}</td>
+                    <td style={limitCell(s.loadingPct, contLimit)}>{fmtPct(s.loadingPct)}</td>
+                    <td style={verdictCell(s.ok)}>{s.ok ? "✔ OK" : "✘ over limit"}</td>
                   </tr>
                 ))}
               </tbody>

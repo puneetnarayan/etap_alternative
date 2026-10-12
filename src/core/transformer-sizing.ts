@@ -4,6 +4,8 @@
  * Units: volts (V), amps (A), kW, kVA. All loads are counted at 100 % (standby included).
  */
 
+import { fmtInt, fmtPct } from "./format";
+
 export type LoadType = "DOL" | "VFD" | "FEEDER";
 
 export interface SizingOptions {
@@ -660,7 +662,7 @@ function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: S
     const capacityKva = setCapacityKva(size, R, opts);
     if (!chosen.fits && p.kva > capacityKva + EPS) {
       notes.push(
-        `${chosen.layout.length > 1 ? `Set ${i + 1}` : "The set"} carries ${p.kva.toFixed(1)} kVA, above its limit of ${capacityKva.toFixed(1)} kVA with one transformer out (loads cannot be split).`,
+        `${chosen.layout.length > 1 ? `Set ${i + 1}` : "The set"} carries ${fmtInt(p.kva)} kVA, above its limit of ${fmtInt(capacityKva)} kVA with one transformer out (loads cannot be split).`,
       );
     }
     return {
@@ -684,7 +686,7 @@ function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: S
   if (!chosen.fits) {
     for (const s of sections.filter((x) => !x.withinNormalLimit)) {
       notes.push(
-        `${s.name} carries ${s.kva.toFixed(1)} kVA, above the ${opts.normalLimit * 100} % normal limit of ${(opts.normalLimit * R).toFixed(1)} kVA (loads cannot be split).`,
+        `${s.name} carries ${fmtInt(s.kva)} kVA, above the ${fmtPct(opts.normalLimit * 100)} % normal limit of ${fmtInt(opts.normalLimit * R)} kVA (loads cannot be split).`,
       );
     }
   }
@@ -765,7 +767,7 @@ export function sizeTransformers(
   const biggest = Math.max(0, ...opts.ratingsKva);
   const blockers = loads
     .filter((l) => l.kva > opts.normalLimit * biggest + EPS)
-    .map((l) => `${l.description || `Row ${l.rowNumber}`} (row ${l.rowNumber}, ${l.kva.toFixed(1)} kVA) is larger than one transformer section can carry: ${opts.normalLimit * 100} % of ${biggest} kVA = ${(opts.normalLimit * biggest).toFixed(1)} kVA.`);
+    .map((l) => `${l.description || `Row ${l.rowNumber}`} (row ${l.rowNumber}, ${fmtInt(l.kva)} kVA) is larger than one transformer section can carry: ${fmtPct(opts.normalLimit * 100)} % of ${fmtInt(biggest)} kVA = ${fmtInt(opts.normalLimit * biggest)} kVA.`);
 
   const start = [...new Set(opts.counts)].filter((n) => n >= 2).sort((a, b) => a - b);
   const combos = loads.length > 0 ? start.map((n) => buildCombo(loads, totalKva, n, opts)) : [];

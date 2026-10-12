@@ -1,4 +1,5 @@
 import writeExcelFile from "write-excel-file/universal";
+import { fmtInt, fmtPct } from "./format";
 import { displayCombos, failureReason, type ComboResult, type SetResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
 
 /** Colours used in the Excel report. */
@@ -292,7 +293,7 @@ export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions):
     return tint([
       cell("Incomer"), cell(s.name), empty(), cell(`Incomer from ${s.name}: ${R} kVA transformer, ${o.transformerLabel}`), empty(), empty(), empty(), empty(),
       ...(o.includePower ? [n(s.kw), n(s.kvar), n(pf(s.kw, s.kvar), "0.00")] : []),
-      n(s.kva), cell(`Section load: ${s.loadingPct.toFixed(1)} % of ${R} kVA (normal limit ${o.options.normalLimit * 100} %)`),
+      n(s.kva), cell(`Section load: ${fmtPct(s.loadingPct)} % of ${fmtInt(R)} kVA (normal limit ${fmtPct(o.options.normalLimit * 100)} %)`),
     ], REPORT_COLORS.incomer);
   };
   const coupler = (i: number): Row => {
@@ -349,13 +350,13 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
       : []),
     ...c.sets.flatMap((set): Row[] => [
       [label(multi ? `Set ${set.index}: ${set.size} transformers – load distribution (normal running)` : "Load distribution (normal running)")],
-      heads("Transformer", "Loads", ...(o.includePower ? ["kW (input)", "kvar"] : []), "kVA", "Loading (%)", `Within ${normalPct} %`),
+      heads("Transformer", "Loads", ...(o.includePower ? ["kW (input)", "kvar"] : []), "kVA", "Loading (%)", `Within ${fmtPct(normalPct)} %`),
       ...set.sections.map((s): Row => [
         cell(s.name), cell(s.loads.length), ...(o.includePower ? [n(s.kw), n(s.kvar)] : []), n(s.kva),
         limited(s.loadingPct, normalPct), verdict(s.withinNormalLimit ? "Yes" : "No", s.withinNormalLimit),
       ]),
       [],
-      [label(`One transformer out${multi ? ` in set ${set.index}` : ""} (each remaining unit limited to ${contPct} %)`)],
+      [label(`One transformer out${multi ? ` in set ${set.index}` : ""} (each remaining unit limited to ${fmtPct(contPct)} %)`)],
       heads("Transformer out", "Load moved (kVA)", "Each remaining (kVA)", "Loading (%)", "Result"),
       ...set.oneOut.map((s): Row => [
         cell(s.outName), n(s.movedKva), n(s.eachKva), limited(s.loadingPct, contPct), verdict(s.ok ? "OK" : "Over limit", s.ok),
