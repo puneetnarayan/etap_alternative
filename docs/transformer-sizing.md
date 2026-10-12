@@ -13,10 +13,11 @@ Sample: `public/sample_load_list.xlsx` is the file users download from the page 
 | Given | Treated as | kVA |
 |---|---|---|
 | kW | Motor (DOL pf 0.7, VFD pf 0.9; other/blank type → DOL, with a warning) | input kW = kW ÷ 0.95; kVA = input kW ÷ pf |
-| Amps only, Type DOL/VFD | Motor | √3 × V × A ÷ 1000 |
-| Amps only, anything else | Outgoing feeder (pf 0.7) | √3 × V × A ÷ 1000 |
+| Amps only, Type DOL/VFD | Motor | √3 × V × A ÷ 1000 (V = 420 for the 433 V level, see below) |
+| Amps only, anything else | Outgoing feeder (pf 0.7) | √3 × V × A ÷ 1000 (V = 420 for the 433 V level) |
 | Neither | Error – row not counted | – |
 
+**Voltage for amps-only loads:** loads at the 433 V level are converted at **420 V** (kVA = √3 × 420 × A ÷ 1000), at 690 V loads at 690 V. Only this conversion changes: the transformer is still 6600 / 433 V, loads are still matched to it on their 433 V voltage level, and motors given in kW do not depend on the voltage. The voltage used is shown on the page, in the Basis column of the loads, and on the Excel Summary. It is the `calculationVoltageV` option (`{ 433: 420 }`).
 kvar = input kW × tan(arccos pf), so kVA² = kW² + kvar². For amps-only loads kW = kVA × pf.
 If kW is given, any amps value on the same row is ignored. All loads count at 100 % (standby included).
 Rows whose voltage differs from the selected transformer are excluded (listed on screen); a blank voltage is assumed to match, with a warning.

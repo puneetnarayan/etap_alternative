@@ -22,7 +22,7 @@ const SQ3 = Math.sqrt(3);
 const DOL_KW = 185 + 185 + 160 + 160 + 132 + 90 + 315;
 const VFD_KW = 250 * 3 + 200 * 3 + 75;
 const AMPS = 180 + 120 + 250 + 800;
-const TOTAL_433 = DOL_KW / (0.7 * 0.95) + VFD_KW / (0.9 * 0.95) + (SQ3 * 433 * AMPS) / 1000;
+const TOTAL_433 = DOL_KW / (0.7 * 0.95) + VFD_KW / (0.9 * 0.95) + (SQ3 * 420 * AMPS) / 1000;
 const TOTAL_690 = 450 / (0.7 * 0.95) + 355 / (0.9 * 0.95);
 
 const load = async () => parseLoadSheet(await readSheet(buf));
@@ -57,13 +57,13 @@ describe("the downloadable sample file", () => {
     expect(r.loads.filter((l) => l.status === "S")).toHaveLength(4);
     expect(r.issues.filter((i) => i.severity === "excluded").map((i) => i.rowNumber)).toEqual([20, 21]);
     expect(r.issues.filter((i) => i.severity === "error")).toEqual([]);
-    expect(r.totalKva).toBeCloseTo(TOTAL_433, 6); // 4,524.25 kVA
+    expect(r.totalKva).toBeCloseTo(TOTAL_433, 6); // 4,493.87 kVA
   });
 
   it("page defaults (433 V, 2000 kVA, start with 3): 3 does not fit, 5 = 3 + 2 does", async () => {
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
     const r = sizeTransformers((await load()).rows, 433, opts);
-    // 3 x 2000 carries 3600 kVA < 4524; 5 = 3 + 2 carries 3600 + 1800 = 5400 kVA
+    // 3 x 2000 carries 3600 kVA < 4494; 5 = 3 + 2 carries 3600 + 1800 = 5400 kVA
     expect(r.combos.map((c) => [c.count, c.layout, c.fits])).toEqual([[3, [3], false], [5, [3, 2], true]]);
     expect(r.recommended).toMatchObject({ count: 5, ratingKva: 2000 });
     expect(r.incomers).toBe(5);
@@ -101,10 +101,25 @@ describe("the downloadable sample file", () => {
     expect(two.couplers).toBe(1);
   });
 
-  it("with all three standard ratings on offer, 3 x 4000 kVA fits (3 x 2500 carries only 4,500 kVA)", async () => {
+  it("with all three standard ratings on offer, 3 x 2500 kVA just fits (4,494 of 4,500 kVA) and 3 x 2000 does not", async () => {
+    expect(TOTAL_433).toBeGreaterThan(3600); // 3 x 2000 carries 3,600 kVA
+    expect(TOTAL_433).toBeLessThan(4500); // 3 x 2500 carries 0.9 x 2 x 2500 = 4,500 kVA
     const r = sizeTransformers((await load()).rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: STANDARD_RATINGS_KVA });
-    expect(r.combos[0].candidates.map((c) => [c.ratingKva, c.fits])).toEqual([[2000, false], [2500, false], [4000, true]]);
-    expect(r.recommended).toMatchObject({ count: 3, ratingKva: 4000 });
+    expect(r.combos[0].candidates.map((c) => [c.ratingKva, c.fits])).toEqual([[2000, false], [2500, true], [4000, true]]);
+    expect(r.recommended).toMatchObject({ count: 3, ratingKva: 2500 });
+  });
+
+  it("amps-only loads are converted at 420 V (433 V loads), 690 V loads at 690 V", async () => {
+    const r = sizeTransformers((await load()).rows, 433);
+    const dosing = r.loads.find((l) => l.description.startsWith("Dosing pump"))!;
+    expect(dosing.kva).toBeCloseTo((SQ3 * 420 * 180) / 1000, 6); // 130.9 kVA (not 135.0 at 433 V)
+    expect(dosing.basis).toContain("√3 × 420 V × 180 A");
+    expect(dosing.voltageV).toBe(433); // still a 433 V load
+    const feeder = r.loads.find((l) => l.description.startsWith("MCC-2"))!;
+    expect(feeder.kva).toBeCloseTo((SQ3 * 420 * 800) / 1000, 6); // 582.0 kVA
+    // motors given in kW do not depend on the voltage
+    const crusher = r.loads.find((l) => l.description === "Crusher")!;
+    expect(crusher.kva).toBeCloseTo(315 / (0.7 * 0.95), 6);
   });
 
   it("the Excel report for it: original sheet included unchanged, W/S counts, recommendation", async () => {
