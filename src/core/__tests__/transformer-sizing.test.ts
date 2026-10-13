@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_OPTIONS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet,
+  DEFAULT_OPTIONS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet, spareFeeders, spareKey,
   parseStatus, parseVoltage, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
 } from "..";
 
@@ -609,5 +609,69 @@ describe("real load balancing decides whether a number of transformers fits", ()
     const r = sizeTransformers(rows, 433, only2000);
     expect(r.recommended).toBeUndefined();
     expect(Date.now() - t0).toBeLessThan(5000);
+  });
+});
+
+describe("spare feeders: one of each type and rating, output only", () => {
+  const mk = (rows: Partial<RawLoadRow>[]) => rows.map((r, i) => row({ rowNumber: i + 2, description: `L${i}`, ...r }));
+  const loadsOf = (rows: Partial<RawLoadRow>[]) => sizeTransformers(mk(rows), 433).loads;
+
+  it("one spare per type and rating (kW and amps are different ratings), in the order DOL, VFD, Feeder", () => {
+    const loads = loadsOf([
+      { type: "VFD", kw: 75 }, { type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "DOL", kw: 90 },
+      { type: "DOL", amps: 180 }, { type: "VFD", amps: 120 }, { type: "Feeder", amps: 800 }, { type: "Feeder", amps: 250 }, { type: "Feeder", amps: 250 },
+      { type: "VFD", kw: 75 },
+    ]);
+    const spares = spareFeeders(loads);
+    expect(spares.map((x) => `${x.type} ${x.rating} ${x.unit} x${x.count}`)).toEqual([
+      "DOL 90 kW x1", "DOL 185 kW x2", "DOL 180 A x1", "VFD 75 kW x2", "VFD 120 A x1", "FEEDER 250 A x2", "FEEDER 800 A x1",
+    ]);
+    expect(spares.map((x) => x.description)).toEqual([
+      "Spare DOL motor feeder, 90 kW", "Spare DOL motor feeder, 185 kW", "Spare DOL motor feeder, 180 A",
+      "Spare VFD motor feeder, 75 kW", "Spare VFD motor feeder, 120 A", "Spare feeder, 250 A", "Spare feeder, 800 A",
+    ]);
+    expect(new Set(spares.map((x) => x.key)).size).toBe(spares.length);
+    // the key is the same one the loads carry
+    for (const l of loads) expect(spares.some((x) => x.key === spareKey(l))).toBe(true);
+  });
+
+  it("a feeder with a kW rating is a DOL motor, so it gets a DOL spare, not a feeder spare", () => {
+    expect(spareFeeders(loadsOf([{ type: "Feeder", kw: 50 }])).map((x) => x.description)).toEqual(["Spare DOL motor feeder, 50 kW"]);
+  });
+
+  it("the sample file gives 12 spares (5 DOL kW, 1 DOL amps, 3 VFD kW, 1 VFD amps, 2 feeders)", () => {
+    const small = sizeTransformers(
+      mk([
+        { type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "DOL", kw: 160 }, { type: "DOL", kw: 160 }, { type: "VFD", kw: 250 }, { type: "VFD", kw: 250 },
+        { type: "VFD", kw: 200 }, { type: "DOL", kw: 132 }, { type: "DOL", kw: 90 }, { type: "VFD", kw: 75 }, { type: "DOL", kw: 315 },
+        { type: "DOL", amps: 180 }, { type: "VFD", amps: 120 }, { type: "Feeder", amps: 250 }, { type: "Feeder", amps: 800 },
+      ]),
+      433,
+    );
+    expect(small.spares).toHaveLength(12);
+  });
+
+  it("spares never enter the calculation: no total, section, set or recommendation includes them", () => {
+    const rows = mk([{ type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "VFD", kw: 250 }, { type: "Feeder", amps: 800 }, { type: "Feeder", amps: 250 }]);
+    const r = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
+    expect(r.spares.length).toBeGreaterThan(0);
+    const expected = 185 / 0.665 * 2 + 250 / 0.855 + (SQ3 * 420 * (800 + 250)) / 1000; // loads only
+    expect(r.totalKva).toBeCloseTo(expected, 6);
+    expect(r.loads).toHaveLength(5); // the spares are not loads
+    for (const c of r.combos) {
+      expect(c.sections.flatMap((x) => x.loads)).toHaveLength(5);
+      expect(c.sections.reduce((a, x) => a + x.kva, 0)).toBeCloseTo(expected, 6);
+      expect(c.sets.reduce((a, x) => a + x.kva, 0)).toBeCloseTo(expected, 6);
+    }
+    // adding more loads of an existing type/rating changes the totals but not the number of spares
+    const more = sizeTransformers([...rows, ...mk([{ type: "DOL", kw: 185 }])], 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
+    expect(more.spares).toHaveLength(r.spares.length);
+    expect(more.totalKva).toBeGreaterThan(r.totalKva);
+    // a spare carries no electrical figures
+    for (const sp of r.spares) expect(Object.keys(sp).sort()).toEqual(["count", "description", "key", "kind", "rating", "type", "unit"]);
+  });
+
+  it("no loads, no spares", () => {
+    expect(sizeTransformers([], 433).spares).toEqual([]);
   });
 });

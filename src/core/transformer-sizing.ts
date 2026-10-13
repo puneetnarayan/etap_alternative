@@ -102,6 +102,8 @@ export interface SizedLoad {
   status?: "W" | "S";
   /** Motor rating as given in the load list (shaft kW). Undefined for amps-only loads. */
   ratedKw?: number;
+  /** Current rating as given in the load list, for loads defined by amps only. */
+  amps?: number;
   /** Electrical input kW (motors: rated kW ÷ efficiency), so that kVA² = kW² + kvar². */
   kw: number;
   kvar: number;
@@ -212,6 +214,7 @@ export function sizeLoad(
       kind: isMotor ? "motor" : "feeder",
       type: loadType,
       voltageV,
+      amps,
       kw: kva * pf,
       kvar: kvarOf(kva * pf, kva),
       kva,
@@ -620,6 +623,54 @@ export interface ComboResult {
   notes: string[];
 }
 
+/**
+ * A spare outgoing feeder: one for each type (DOL / VFD / Feeder) and rating (kW or amps) found in the
+ * load list. Spares are for the output only: they are never part of `loads`, so they do not change any
+ * total, loading or the number of transformers.
+ */
+export interface SpareFeeder {
+  /** "DOL|kW|185", "FEEDER|A|250", ... */
+  key: string;
+  type: LoadType;
+  kind: "motor" | "feeder";
+  unit: "kW" | "A";
+  rating: number;
+  description: string;
+  /** How many loads of this type and rating are in the load list. */
+  count: number;
+}
+
+/** Key of a load's type and rating, or null when it has no rating to copy. */
+export function spareKey(l: Pick<SizedLoad, "type" | "ratedKw" | "amps">): string | null {
+  if (l.ratedKw !== undefined) return `${l.type}|kW|${l.ratedKw}`;
+  if (l.amps !== undefined) return `${l.type}|A|${l.amps}`;
+  return null;
+}
+
+/** One spare feeder per type and rating, ordered DOL, VFD, Feeder, then kW before amps, then by rating. */
+export function spareFeeders(loads: SizedLoad[]): SpareFeeder[] {
+  const found = new Map<string, SpareFeeder>();
+  for (const l of loads) {
+    const key = spareKey(l);
+    if (key === null) continue;
+    const have = found.get(key);
+    if (have) {
+      have.count++;
+      continue;
+    }
+    const unit = l.ratedKw !== undefined ? "kW" : "A";
+    const rating = (unit === "kW" ? l.ratedKw : l.amps) as number;
+    found.set(key, {
+      key, type: l.type, kind: l.kind, unit, rating, count: 1,
+      description: l.kind === "feeder" ? `Spare feeder, ${rating} ${unit}` : `Spare ${l.type} motor feeder, ${rating} ${unit}`,
+    });
+  }
+  const order: Record<LoadType, number> = { DOL: 0, VFD: 1, FEEDER: 2 };
+  return [...found.values()].sort(
+    (a, b) => order[a.type] - order[b.type] || (a.unit === b.unit ? 0 : a.unit === "kW" ? -1 : 1) || a.rating - b.rating,
+  );
+}
+
 export interface SizingResult {
   selectedVoltageV: number;
   loads: SizedLoad[];
@@ -639,6 +690,8 @@ export interface SizingResult {
    * of transformers. When there are any, no number of transformers helps and none is added.
    */
   blockers: string[];
+  /** One spare feeder per type and rating, for the output only (not in any calculation). */
+  spares: SpareFeeder[];
   // Convenience for the recommended combination:
   incomers?: number;
   couplers?: number;
@@ -794,6 +847,7 @@ export function sizeTransformers(
   const recommended = loads.length > 0 ? candidates.find((c) => c.fits) : undefined;
   const result: SizingResult = {
     selectedVoltageV, loads, issues, totals, totalKva, totalKw: used.kw, candidates, recommended, combos, blockers,
+    spares: spareFeeders(loads),
   };
   if (recommended) {
     const combo = combos.find((c) => c.count === recommended.count)!;
