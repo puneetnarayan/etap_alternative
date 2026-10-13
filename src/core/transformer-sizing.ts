@@ -51,20 +51,29 @@ export interface SizingOptions {
   calculationVoltageV: Record<number, number>;
   /**
    * Fixed outgoing feeders added to every PMCC / IMCC (every set of transformers): `count` feeders of
-   * `amps` each, counted in the load. Half of each kind goes on each side of the middle transformer of
+   * `amps` each listed, `counted` of them (default all) counted in the load. Half of each kind goes on each side of the middle transformer of
    * a set of 3 (the two end sections), or on each side of the bus coupler of a set of 2. Empty = none.
    */
   mccFeeders: MccFeeder[];
 }
 
-export interface MccFeeder { amps: number; count: number }
+export interface MccFeeder {
+  amps: number;
+  /** Feeders of this rating installed (listed) in each PMCC / IMCC. */
+  count: number;
+  /** How many of them are counted in the load; the rest are listed with zero load. Defaults to `count`. */
+  counted?: number;
+}
 
-/** 6 x 63 A, 6 x 32 A, 6 x 16 A and 10 x 6 A in each PMCC / IMCC. */
+/**
+ * In each PMCC / IMCC: 6 x 63 A, 6 x 32 A, 6 x 16 A and 10 x 6 A installed, of which 4, 4, 4 and 6
+ * outputs are counted in the load calculation.
+ */
 export const STANDARD_MCC_FEEDERS: MccFeeder[] = [
-  { amps: 63, count: 6 },
-  { amps: 32, count: 6 },
-  { amps: 16, count: 6 },
-  { amps: 6, count: 10 },
+  { amps: 63, count: 6, counted: 4 },
+  { amps: 32, count: 6, counted: 4 },
+  { amps: 16, count: 6, counted: 4 },
+  { amps: 6, count: 10, counted: 6 },
 ];
 
 /** Standard transformer ratings offered in the UI (kVA). */
@@ -741,13 +750,26 @@ function mccFeedersFor(layout: number[], selectedVoltageV: number, opts: SizingO
   layout.forEach((size, si) => {
     const sides = [first, first + size - 1];
     for (const f of opts.mccFeeders) {
-      for (let k = 0; k < f.count; k++) {
-        const r = sizeLoad(
-          { rowNumber: 0, description: `PMCC/IMCC feeder ${f.amps} A (set ${si + 1})`, type: "Feeder", amps: f.amps, voltageV: selectedVoltageV },
-          selectedVoltageV,
-          opts,
-        );
-        if ("load" in r) out.set({ ...r.load, source: "mcc" }, sides[k < Math.ceil(f.count / 2) ? 0 : 1]);
+      const counted = Math.min(f.counted ?? f.count, f.count);
+      const listed = [Math.ceil(f.count / 2), Math.floor(f.count / 2)];
+      const inCalc = [Math.ceil(counted / 2), Math.floor(counted / 2)];
+      for (const side of [0, 1]) {
+        for (let k = 0; k < listed[side]; k++) {
+          const r = sizeLoad(
+            { rowNumber: 0, description: `PMCC/IMCC feeder ${f.amps} A (set ${si + 1})`, type: "Feeder", amps: f.amps, voltageV: selectedVoltageV },
+            selectedVoltageV,
+            opts,
+          );
+          if (!("load" in r)) continue;
+          const load: SizedLoad = { ...r.load, source: "mcc" };
+          if (k >= inCalc[side]) {
+            Object.assign(load, {
+              description: `${load.description} (not counted)`, kw: 0, kvar: 0, kva: 0,
+              basis: `Installed but not counted: ${counted} of ${f.count} × ${f.amps} A are in the calculation`,
+            });
+          }
+          out.set(load, sides[side]);
+        }
       }
     }
     first += size;

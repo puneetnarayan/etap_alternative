@@ -199,7 +199,7 @@ export default function TransformerSizing() {
         </fieldset>
         <label>
           <input type="checkbox" checked={withMcc} onChange={(e) => setWithMcc(e.target.checked)} />{" "}
-          Add PMCC/IMCC feeders to every set: {STANDARD_MCC_FEEDERS.map((f) => `${f.count} × ${f.amps} A`).join(", ")} (counted in the load; half on each side of the middle transformer of a set of 3, or of the bus coupler of a set of 2)
+          Add PMCC/IMCC feeders to every set: {STANDARD_MCC_FEEDERS.map((f) => `${f.count} × ${f.amps} A`).join(", ")} installed, of which {STANDARD_MCC_FEEDERS.map((f) => f.counted).join(", ")} outputs are counted in the load ( half on each side of the middle transformer of a set of 3, or of the bus coupler of a set of 2)
         </label>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Start with</legend>
@@ -412,7 +412,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
 
       {c.mccLoads.length > 0 && (
         <p style={{ margin: "8px 0" }}>
-          Total load {fmtInt(c.totalKva)} kVA = load list {fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + {c.mccLoads.length} PMCC/IMCC feeders {fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA.
+          Total load {fmtInt(c.totalKva)} kVA = load list {fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + PMCC/IMCC feeders ({c.mccLoads.filter((l) => l.kva > 0).length} of {c.mccLoads.length} counted) {fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA.
         </p>
       )}
       {c.sets.map((set) => (
