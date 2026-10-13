@@ -37,7 +37,7 @@ export default function Home() {
         {STEPS.map(([t, d]) => <li key={t} style={{ marginBottom: 6 }}><b>{t}.</b> {d}</li>)}
       </ol>
       <p>
-        Today the sidebar covers transformer sizing and the MCC load list with breaker selection (steps 2 to 4, from a load list you provide). Cable sizing is next;
+        Today the sidebar covers transformer sizing and the MCC load list with breaker selection (steps 2 to 4, from a load list you provide), and a load-flow preview on a built-in sample plant. Cable sizing is next;
         fault level, power generation and protection grading come later.
       </p>
 

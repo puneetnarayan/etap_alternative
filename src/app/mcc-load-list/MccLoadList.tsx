@@ -2,12 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readSheet } from "read-excel-file/universal";
-import { DEFAULT_MCC_ASSUMPTIONS, REPORT_COLORS, breakerLabel, fmtInt, fmtPf, kindColor, mccRows, type MccRow } from "@/core";
+import { REPORT_COLORS, breakerLabel, fmtInt, kindColor, mccRows, type MccRow } from "@/core";
 import { loadLoadList, type StoredLoadList } from "../loadListStore";
 import { useShell } from "../AppShell";
 
 export default function MccLoadList() {
-  const { status, generate } = useShell();
+  const { status, generate, assumptions: a, setAssumptions } = useShell();
+  // Edited as text, applied when it is a valid number (otherwise the previous value stays).
+  const [text, setText] = useState({
+    efficiency: String(Math.round(a.efficiency * 100)), pfGeneral: String(a.pfGeneral), pfDol: String(a.pfDol), pfVfd: String(a.pfVfd),
+    designMultiplier: String(a.designMultiplier), calcVoltage433: String(a.calcVoltage433),
+  });
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -15,7 +20,12 @@ export default function MccLoadList() {
   const [stored, setStored] = useState<StoredLoadList | null>(null);
   useEffect(() => { setStored(loadLoadList()); }, [status]);
 
-  const result = useMemo(() => (stored ? mccRows(stored.sheet) : null), [stored]);
+  const result = useMemo(() => (stored ? mccRows(stored.sheet, a) : null), [stored, a]);
+  const edit = (key: keyof typeof text, min: number, max: number, scale = 1) => (v: string) => {
+    setText((t) => ({ ...t, [key]: v }));
+    const n = Number(v);
+    if (v.trim() !== "" && Number.isFinite(n) && n > min && n <= max) setAssumptions({ ...a, [key]: n / scale });
+  };
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
@@ -62,6 +72,21 @@ export default function MccLoadList() {
         {status.kind === "no-list" && <p>No load list yet: drop one above, or drop one on the Transformer sizing page first.</p>}
         {status.kind === "error" && <p role="alert" style={{ color: "#c0392b" }}>Could not generate the workbook: {status.message}</p>}
       </div>
+      <fieldset style={{ border: "1px solid #888", borderRadius: 6, margin: "12px 0" }}>
+        <legend>Assumptions (editable)</legend>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 8, padding: "8px 0" }}>
+          <label>Power factor, general feeder <input style={{ width: 60 }} value={text.pfGeneral} onChange={(e) => edit("pfGeneral", 0, 1)(e.target.value)} /></label>
+          <label>Power factor, DOL <input style={{ width: 60 }} value={text.pfDol} onChange={(e) => edit("pfDol", 0, 1)(e.target.value)} /></label>
+          <label>Power factor, VFD <input style={{ width: 60 }} value={text.pfVfd} onChange={(e) => edit("pfVfd", 0, 1)(e.target.value)} /></label>
+          <label>DOL motor efficiency (%, provisional) <input style={{ width: 60 }} value={text.efficiency} onChange={(e) => edit("efficiency", 0, 100, 100)(e.target.value)} /></label>
+          <label>Design current multiplier <input style={{ width: 60 }} value={text.designMultiplier} onChange={(e) => edit("designMultiplier", 0, 5)(e.target.value)} /></label>
+          <label>Voltage used for 433 V loads (V) <input style={{ width: 60 }} value={text.calcVoltage433} onChange={(e) => edit("calcVoltage433", 0, 1000)(e.target.value)} /></label>
+        </div>
+        <p style={{ margin: "4px 0", fontSize: 14 }}>
+          The workbook uses the same values (on its Notes sheet). Fixed rules: MCCB 32 / 63 / 100 / 160 / 250 / 400 A; 500 A and above EDO ACB (never a 630 A MCCB);
+          400 to 500 A engineering review. A rated current in the load list is used in preference to kW.
+        </p>
+      </fieldset>
       {result && <Results result={result} />}
     </div>
   );
@@ -86,7 +111,6 @@ const selectionCell = (r: MccRow) => ({
 function Results({ result }: { result: ReturnType<typeof mccRows> }) {
   if (result.errors.length) return <p role="alert" style={{ color: "crimson" }}>{result.errors.join(" ")}</p>;
   const { rows, summary: s } = result;
-  const a = DEFAULT_MCC_ASSUMPTIONS;
   return (
     <section>
       <h3>Results (preliminary)</h3>
@@ -94,11 +118,6 @@ function Results({ result }: { result: ReturnType<typeof mccRows> }) {
         <b>{s.loads}</b> loads · {s.mccb} MCCB · {s.acb} EDO ACB ({s.verify} to verify) ·{" "}
         <span style={{ background: s.review ? REPORT_COLORS.over : "transparent", padding: "0 4px" }}>{s.review} need engineering review</span>
         {s.missing > 0 && <> · {s.missing} without enough data for a current</>}
-      </p>
-      <p style={{ fontSize: 14 }}>
-        Assumptions: power factor {fmtPf(a.pfGeneral)} general feeder / {fmtPf(a.pfDol)} DOL / {fmtPf(a.pfVfd)} VFD; DOL motor efficiency {fmtInt(a.efficiency * 100)} % (provisional);
-        433 V loads calculated at {fmtInt(a.calcVoltage433)} V; design current = current × {a.designMultiplier}. A rated current in the load list is used in preference to kW.
-        MCCB 32 / 63 / 100 / 160 / 250 / 400 A; 500 A and above: EDO ACB; 400 to 500 A: engineering review.
       </p>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse" }}>

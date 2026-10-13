@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { DEFAULT_MCC_ASSUMPTIONS, type MccAssumptions } from "@/core/mcc-breaker";
 import { loadLoadList, saveLoadList } from "./loadListStore";
 
 export type MccStatus =
@@ -14,6 +15,9 @@ export type MccStatus =
 
 interface Shell {
   status: MccStatus;
+  /** Assumptions for the MCC workbook (edited on the MCC page; the sidebar click uses the same ones). */
+  assumptions: MccAssumptions;
+  setAssumptions: (a: MccAssumptions) => void;
   /** Build the MCC workbook from the stored (or given) load list and download it. Only called from a click. */
   generate: (source?: { fileName: string; sheet: readonly (readonly unknown[])[] }) => Promise<void>;
 }
@@ -43,6 +47,7 @@ const ITEMS = [
   { href: "/", label: "Home", icon: "🏠" },
   { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
 ] as const;
+const AFTER_MCC = [{ href: "/load-flow", label: "Load flow", icon: "⚡" }] as const;
 
 const MCC_TIP =
   "Purpose: prepares an MCC load schedule with preliminary breaker selections (MCCB / EDO ACB) as an Excel workbook. Click to generate it from your current load list.";
@@ -51,6 +56,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // A fresh session always starts expanded.
   const [open, setOpen] = useState(true);
   const [status, setStatus] = useState<MccStatus>({ kind: "idle" });
+  const [assumptions, setAssumptions] = useState<MccAssumptions>(DEFAULT_MCC_ASSUMPTIONS);
+  const assumptionsRef = useRef(assumptions);
+  assumptionsRef.current = assumptions;
   const pathname = usePathname();
   const router = useRouter();
 
@@ -64,7 +72,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     try {
       if (source) saveLoadList(source.fileName, source.sheet);
       const { mccWorkbookBuffer } = await import("@/core/mcc-workbook");
-      const { buffer, rows, missing } = await mccWorkbookBuffer(list.sheet, list.fileName);
+      const { buffer, rows, missing } = await mccWorkbookBuffer(list.sheet, list.fileName, assumptionsRef.current);
       const name = `MCC_Load_List_Breaker_Selection_${stamp()}.xlsx`;
       download(buffer, name);
       setStatus({ kind: "done", name, rows, missing });
@@ -78,7 +86,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     void generate();
   };
 
-  const ctx = useMemo(() => ({ status, generate }), [status, generate]);
+  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions }), [status, generate, assumptions]);
   const link = (active: boolean) => ({
     display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, textDecoration: "none",
     color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
@@ -108,6 +116,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
           >
             <span aria-hidden>🗄️</span>{open && <span>MCC Load List / Breaker Selection</span>}
           </button>
+          {AFTER_MCC.map((i) => (
+            <Link key={i.href} href={i.href} style={link(pathname === i.href)} title={i.label}>
+              <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
+            </Link>
+          ))}
           <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px", overflowWrap: "anywhere" }}>
             {status.kind === "busy" && (open ? "Generating workbook…" : "…")}
             {status.kind === "done" && open && `✔ ${status.name} downloaded`}

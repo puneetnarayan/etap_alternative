@@ -41,6 +41,13 @@ function Tag({ value }: { value: string }) {
 }
 
 type Combination = "3" | "2";
+type VoltageChoice = "433" | "690" | "both";
+
+/** Which of the supported voltage levels (433, 690 V) the loads have, ascending. */
+function presentVoltages(rows: RawLoadRow[] | null): number[] {
+  if (!rows) return [];
+  return TRANSFORMER_OPTIONS.map((t) => t.secondaryV).filter((v) => rows.some((r) => r.voltageV !== undefined && Math.abs(r.voltageV - v) / v <= 0.01));
+}
 type ReportStatus = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string } | { kind: "error"; message: string };
 
 function num(s: string, fallback: number, min: number, max: number) {
@@ -72,7 +79,8 @@ export default function TransformerSizing() {
   const [fileName, setFileName] = useState("");
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [txId, setTxId] = useState<string>(TRANSFORMER_OPTIONS[0].id);
+  const [choice, setChoice] = useState<VoltageChoice>("433");
+  const [calcV433, setCalcV433] = useState("420");
   const [combination, setCombination] = useState<Combination>("3");
   const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
@@ -84,8 +92,12 @@ export default function TransformerSizing() {
   const [report, setReport] = useState<ReportStatus>({ kind: "idle" });
   const input = useRef<HTMLInputElement>(null);
 
-  const tx = TRANSFORMER_OPTIONS.find((t) => t.id === txId)!;
-  const calcV = DEFAULT_OPTIONS.calculationVoltageV[tx.secondaryV] ?? tx.secondaryV;
+  const present = useMemo(() => presentVoltages(rows), [rows]);
+  const both = present.length === 2;
+  // The choice is limited to what the file has: a level that is not in the file, or "both" when only one is, falls back.
+  const effective: VoltageChoice = choice === "both" ? (both ? "both" : String(present[0] ?? 433) as VoltageChoice)
+    : present.length === 0 || present.includes(Number(choice)) ? choice : (String(present[0]) as VoltageChoice);
+  const selected = TRANSFORMER_OPTIONS.filter((t) => effective === "both" || String(t.secondaryV) === effective);
 
   const opts: SizingOptions = useMemo(() => ({
     ...DEFAULT_OPTIONS,
@@ -94,23 +106,28 @@ export default function TransformerSizing() {
     ratingsKva: [rating],
     counts: [Number(combination)],
     mccFeeders: withMcc ? STANDARD_MCC_FEEDERS : [],
-  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination, withMcc]);
+    calculationVoltageV: { ...DEFAULT_OPTIONS.calculationVoltageV, 433: num(calcV433, 420, 0, 1000) },
+  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination, withMcc, calcV433]);
 
-  const result = useMemo(() => (rows ? sizeTransformers(rows, tx.secondaryV, opts) : null), [rows, tx, opts]);
-  // When the chosen rating cannot carry the load even with the maximum number of transformers,
-  // find what would (any standard rating).
-  const alternative = useMemo(
-    () => (rows && result && result.loads.length > 0 && !result.recommended
-      ? sizeTransformers(rows, tx.secondaryV, { ...opts, ratingsKva: STANDARD_RATINGS_KVA }).recommended
-      : undefined),
-    [rows, result, tx, opts],
+  // One run per selected voltage level. When the chosen rating cannot carry a level's load even with the
+  // maximum number of transformers, find what would (any standard rating).
+  const runs = useMemo(
+    () => (rows ? selected.map((tx) => {
+      const result = sizeTransformers(rows, tx.secondaryV, opts);
+      const alternative = result.loads.length > 0 && !result.recommended
+        ? sizeTransformers(rows, tx.secondaryV, { ...opts, ratingsKva: STANDARD_RATINGS_KVA }).recommended
+        : undefined;
+      return { tx, result, alternative };
+    }) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, effective, opts],
   );
 
-  async function makeReport(r: SizingResult, sourceName: string, sheet: readonly (readonly unknown[])[]) {
+  async function makeReport(r: SizingResult, label: string, sourceName: string, sheet: readonly (readonly unknown[])[]) {
     setReport({ kind: "busy" });
     try {
       const blob = await buildReportBlob(r, {
-        transformerLabel: tx.label, fileName: sourceName, options: opts, includePower, originalSheet: sheet,
+        transformerLabel: label, fileName: sourceName, options: opts, includePower, originalSheet: sheet,
       });
       const name = reportFileName(sourceName, r.selectedVoltageV);
       downloadBlob(blob, name);
@@ -140,10 +157,15 @@ export default function TransformerSizing() {
       setRows(parsed.rows);
       setRawSheet(sheet);
       setFileName(file.name);
-      // The Excel report is created and downloaded as soon as the file is in.
-      const first = sizeTransformers(parsed.rows, tx.secondaryV, opts);
-      if (first.loads.length > 0) await makeReport(first, file.name, sheet);
-      else setReport({ kind: "error", message: `No usable loads at ${tx.secondaryV} V, so no Excel report was created.` });
+      // Start with 433 V when the file has it, otherwise the other level; the report is created and
+      // downloaded as soon as the file is in.
+      const levels = presentVoltages(parsed.rows);
+      const startV = levels.includes(433) || levels.length === 0 ? 433 : levels[0];
+      setChoice(String(startV) as VoltageChoice);
+      const tx = TRANSFORMER_OPTIONS.find((t) => t.secondaryV === startV)!;
+      const first = sizeTransformers(parsed.rows, startV, opts);
+      if (first.loads.length > 0) await makeReport(first, tx.label, file.name, sheet);
+      else setReport({ kind: "error", message: `No usable loads at ${startV} V, so no Excel report was created.` });
     } catch (e) {
       setRows(null);
       setLoadError(`Could not read that file: ${(e as Error).message}`);
@@ -184,13 +206,24 @@ export default function TransformerSizing() {
 
       <h3>Transformers</h3>
       <div style={{ display: "grid", gap: 10 }}>
-        <label>
-          Voltage:{" "}
-          <select value={txId} onChange={(e) => setTxId(e.target.value)}>
-            {TRANSFORMER_OPTIONS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
-          <span> Only loads at {tx.secondaryV} V are included; other voltage levels are listed as excluded. Loads given in amps are converted to kVA at {fmtInt(calcV)} V.</span>
-        </label>
+        <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
+          <legend>Voltage</legend>
+          {TRANSFORMER_OPTIONS.filter((t) => present.length === 0 || present.includes(t.secondaryV)).map((t) => (
+            <label key={t.id} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
+              <input type="radio" name="voltage" checked={effective === String(t.secondaryV)} onChange={() => setChoice(String(t.secondaryV) as VoltageChoice)} /> {t.secondaryV} V ({t.label})
+            </label>
+          ))}
+          {both && (
+            <label style={{ marginRight: 16, whiteSpace: "nowrap" }}>
+              <input type="radio" name="voltage" checked={effective === "both"} onChange={() => setChoice("both")} /> Both (results for each)
+            </label>
+          )}
+          <div style={{ margin: "4px 0 6px" }}>
+            {rows && !both && present.length === 1 ? <>This file has loads at {present[0]} V only. </> : null}
+            {both ? <>This file has loads at both 433 V and 690 V. </> : null}
+            Only loads at the selected voltage are included; other voltage levels are listed as excluded.
+          </div>
+        </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Transformer rating</legend>
           {STANDARD_RATINGS_KVA.map((r) => (
@@ -217,26 +250,31 @@ export default function TransformerSizing() {
         </fieldset>
       </div>
 
-      <details style={{ margin: "12px 0" }}>
-        <summary>Assumptions (editable)</summary>
+      <fieldset style={{ border: "1px solid #888", borderRadius: 6, margin: "12px 0" }}>
+        <legend>Assumptions (editable)</legend>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8, padding: "8px 0" }}>
           <label>Motor efficiency (%) <input style={{ width: 60 }} value={eff} onChange={(e) => setEff(e.target.value)} /></label>
           <label>Power factor DOL <input style={{ width: 60 }} value={pfDol} onChange={(e) => setPfDol(e.target.value)} /></label>
           <label>Power factor VFD <input style={{ width: 60 }} value={pfVfd} onChange={(e) => setPfVfd(e.target.value)} /></label>
           <label>Power factor feeder <input style={{ width: 60 }} value={pfFeeder} onChange={(e) => setPfFeeder(e.target.value)} /></label>
+          <label>Voltage for amps → kVA at 433 V (V) <input style={{ width: 60 }} value={calcV433} onChange={(e) => setCalcV433(e.target.value)} /></label>
         </div>
         <p style={{ margin: "4px 0" }}>
           Fixed: maximum loading {fmtPct(DEFAULT_OPTIONS.normalLimit * 100)} % in normal running and {fmtPct(DEFAULT_OPTIONS.contingencyLimit * 100)} % on each remaining
           transformer with one out. Total kVA is the sum of each load&apos;s kVA. All loads count at 100 %, working (W) and standby (S) alike.
+          Loads given in amps are converted to kVA at the voltage above (690 V loads at 690 V).
         </p>
-      </details>
+      </fieldset>
 
-      {result && (
-        <Results
-          result={result} tx={tx.label} opts={opts} alternative={alternative}
-          busy={report.kind === "busy"} onDownload={() => void makeReport(result, fileName, rawSheet)}
-        />
-      )}
+      {runs.map(({ tx, result, alternative }) => (
+        <section key={tx.id}>
+          {runs.length > 1 && <h2 style={{ borderBottom: "2px solid #888" }}>{tx.label}</h2>}
+          <Results
+            result={result} tx={tx.label} opts={opts} alternative={alternative}
+            busy={report.kind === "busy"} onDownload={() => void makeReport(result, tx.label, fileName, rawSheet)}
+          />
+        </section>
+      ))}
     </div>
   );
 }

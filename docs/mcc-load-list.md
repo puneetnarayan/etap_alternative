@@ -9,6 +9,8 @@ Sidebar entry **MCC Load List / Breaker Selection** (route `/mcc-load-list`). Th
 - Built with ExcelJS (MIT), because write-excel-file has no filters, cell notes or drop-downs. It is loaded only when the workbook is generated.
 
 ## Results on the page
+The assumptions (power factors, DOL efficiency, design-current multiplier, voltage used for 433 V loads) are visible and editable above the results; the workbook, including the sidebar click, uses the edited values.
+
 The page shows the same figures as a table (colours as on the Transformer sizing page: orange headers, W/S and type pastels; breaker cell green = preliminary selection, yellow = ACB to verify, light red = engineering review) with a summary line and the assumptions, for the last load list used in the tab. The rules live in `mccRows` (`src/core/mcc-breaker.ts`), shared with the tests; the workbook has its own formulas, checked against the same rules.
 
 ## Workbook

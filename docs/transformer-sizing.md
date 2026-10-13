@@ -9,6 +9,9 @@ Optional: **Working/Standby (W/S)** column (any header containing "working", "st
 Optional: **Duty/standby group** (any header containing "group" or "pair"): loads with the same group name are placed on different transformers' bus sections.
 Sample: `public/sample_load_list.xlsx` is the file users download from the page (supplied by the project owner; replace the file to change it). The tests for it are in `src/core/__tests__/public-sample.test.ts`. The earlier hand-built small plant is kept only as a test fixture, `src/core/__tests__/fixtures/small_plant_load_list.xlsx`.
 
+## Voltage selection
+Radio buttons choose the voltage level: **433 V**, **690 V**, and **Both** (only when the file has loads at both levels; a level the file does not have is not offered). Before a file is loaded both levels are shown. With Both, each level gets its own result section and its own Excel report button; the automatic download on drop is for 433 V (or 690 V if that is all the file has). The assumptions (efficiency, power factors, voltage used for amps at 433 V) are always visible and editable.
+
 ## Load classification and kVA
 | Given | Treated as | kVA |
 |---|---|---|
