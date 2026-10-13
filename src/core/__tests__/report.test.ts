@@ -655,7 +655,8 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
     expect(spareRows).toHaveLength(result.spares.length);
     expect(spareRows).toHaveLength(12);
     spareRows.forEach((r, i) => {
-      expect(r.every((c) => bg(c) === GOLD), `row ${i}`).toBe(true); // gold end to end
+      const ws = header.indexOf("W/S");
+      expect(r.map((c, k) => (bg(c) === GOLD ? k : -1)).filter((k) => k >= 0), `row ${i}`).toEqual([ws]); // only the SP cell is gold
       expect(val(r[header.indexOf("Description")])).toBe(result.spares[i].description);
       expect(val(r[header.indexOf("Basis")])).toBe("Spare: not included in the calculation");
       for (const col of ["Row", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
@@ -688,7 +689,7 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
       expect(new Set(spareRows.map((r) => val(r[3]))).size).toBe(result.spares.length); // each description once
       rows.forEach((r, i) => {
         if (val(r[0]) !== "Spare feeder") return;
-        expect(r.every((c) => bg(c) === GOLD)).toBe(true);
+        expect(r.map((c, k) => (bg(c) === GOLD ? k : -1)).filter((k) => k >= 0)).toEqual([4]); // only the SP cell (W/S column)
         const prev = rows[i - 1];
         expect(val(prev[0]), `${name}: spare ${val(r[3])} follows a load`).toBe("Outgoing load");
         expect(val(prev[1])).toBe(val(r[1])); // same section
