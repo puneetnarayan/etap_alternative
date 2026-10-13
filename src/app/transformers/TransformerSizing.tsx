@@ -8,6 +8,7 @@ import {
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
 } from "@/core";
+import { saveLoadList } from "../loadListStore";
 
 // Tables follow the Excel report: light orange headers, thin borders, numbers and percentages centred,
 // green / red for within / over a limit, pastels for W, S, DOL, VFD and Feeder.
@@ -135,6 +136,7 @@ export default function TransformerSizing() {
         setLoadError(parsed.errors.join(" "));
         return;
       }
+      saveLoadList(file.name, sheet);
       setRows(parsed.rows);
       setRawSheet(sheet);
       setFileName(file.name);

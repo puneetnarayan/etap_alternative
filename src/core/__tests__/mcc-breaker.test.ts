@@ -1,0 +1,184 @@
+import { readFileSync } from "node:fs";
+import { strFromU8, unzipSync } from "fflate";
+import ExcelJS from "exceljs";
+import { readSheet } from "read-excel-file/universal";
+import { describe, expect, it } from "vitest";
+import {
+  breakerLabel, ctPrimaryFor, currentFor, selectBreaker,
+} from "..";
+import { mccWorkbookBuffer } from "../mcc-workbook";
+
+const label = (d: number | undefined, o = {}) => breakerLabel(selectBreaker(d, o));
+
+describe("breaker selection", () => {
+  it("20 A -> 32 A MCCB; 50 A -> 63 A MCCB; 120 A -> 160 A MCCB; 300 A -> 400 A MCCB", () => {
+    expect(label(20)).toBe("32 A MCCB");
+    expect(label(50)).toBe("63 A MCCB");
+    expect(label(120)).toBe("160 A MCCB");
+    expect(label(300)).toBe("400 A MCCB");
+    expect(label(32)).toBe("32 A MCCB");
+    expect(label(400)).toBe("400 A MCCB");
+  });
+
+  it("450 A -> engineering review, not an undersized 400 A MCCB", () => {
+    const s = selectBreaker(450);
+    expect(s).toMatchObject({ kind: "REVIEW", status: "review" });
+    expect(s.ratingA).toBeUndefined();
+    expect(s.message).toMatch(/engineering review/i);
+    expect(selectBreaker(400.5).kind).toBe("REVIEW");
+    expect(selectBreaker(499.9).kind).toBe("REVIEW");
+  });
+
+  it("500 A and 620 A -> 630 A EDO ACB; a 630 A MCCB is never selected", () => {
+    expect(label(500)).toBe("630 A EDO ACB");
+    expect(label(620)).toBe("630 A EDO ACB");
+    expect(label(630)).toBe("630 A EDO ACB");
+    for (let d = 1; d <= 1300; d += 7) {
+      const s = selectBreaker(d);
+      expect(s.kind === "MCCB" && s.ratingA === 630).toBe(false);
+      if (s.kind === "MCCB") expect([32, 63, 100, 160, 250, 400]).toContain(s.ratingA);
+    }
+  });
+
+  it("an existing 800 A ACB incomer -> 1000 A EDO ACB; other 800 A values are not converted", () => {
+    expect(label(1000, { existing800AcbIncomer: true })).toBe("1000 A EDO ACB");
+    expect(selectBreaker(undefined, { existing800AcbIncomer: true }).ratingA).toBe(1000);
+    expect(label(700)).toBe("800 A EDO ACB"); // a new requirement of 700 A is not an existing 800 A incomer
+  });
+
+  it("above 630 A -> next standard ACB, flagged for verification; above 1250 A -> review", () => {
+    for (const [d, r] of [[631, 800], [800, 800], [801, 1000], [1000, 1000], [1001, 1250], [1250, 1250]] as const) {
+      expect(selectBreaker(d)).toMatchObject({ kind: "EDO ACB", ratingA: r, status: "verify" });
+    }
+    expect(selectBreaker(1251).kind).toBe("REVIEW");
+  });
+
+  it("no design current -> no breaker, never a made-up value", () => {
+    for (const d of [undefined, null, NaN, 0, -5]) expect(selectBreaker(d as number | undefined).kind).toBe("REVIEW");
+  });
+
+  it("indicative CT primary: smallest standard primary not below the rating (1000 A -> 1000/5 A)", () => {
+    expect(ctPrimaryFor(1000)).toBe(1000);
+    expect(ctPrimaryFor(630)).toBe(750);
+    expect(ctPrimaryFor(undefined)).toBeUndefined();
+  });
+});
+
+describe("current and power factor", () => {
+  it("PF: general feeder 0.7, DOL 0.7, VFD 0.9", () => {
+    expect(currentFor({ type: "FEEDER", kw: 100, voltageV: 415 }).pf).toBe(0.7);
+    expect(currentFor({ type: "DOL", kw: 100, voltageV: 415 }).pf).toBe(0.7);
+    expect(currentFor({ type: "VFD", kw: 100, voltageV: 415 }).pf).toBe(0.9);
+  });
+
+  it("hand-calculated: 185 kW DOL at 433 V (calculated at 420 V), 0.7, 93 % = 390.6 A; VFD 250 kW = 381.8 A; feeder 100 kW at 690 V = 119.5 A", () => {
+    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).calculatedA).toBeCloseTo(390.64, 1); // 185000 / (1.7321 x 420 x 0.7 x 0.93)
+    expect(currentFor({ type: "VFD", kw: 250, voltageV: 433 }).calculatedA).toBeCloseTo(381.85, 1); // no efficiency for VFD
+    expect(currentFor({ type: "FEEDER", kw: 100, voltageV: 690 }).calculatedA).toBeCloseTo(119.5, 1);
+    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).designA).toBeCloseTo(390.64 * 1.25, 1);
+  });
+
+  it("a valid rated current is preferred to a calculation", () => {
+    const r = currentFor({ type: "DOL", kw: 185, voltageV: 433, ratedA: 300 });
+    expect(r).toMatchObject({ usedA: 300, source: "Entered current" });
+    expect(r.designA).toBeCloseTo(375, 9);
+  });
+
+  it("missing voltage or kW leaves everything blank (no zero)", () => {
+    for (const i of [{ type: "DOL" as const, kw: 100 }, { type: "VFD" as const, voltageV: 433 }, { type: "FEEDER" as const }]) {
+      const r = currentFor(i);
+      expect(r.calculatedA).toBeUndefined();
+      expect(r.usedA).toBeUndefined();
+      expect(r.designA).toBeUndefined();
+      expect(r.source).toBe("Missing input");
+    }
+  });
+});
+
+describe("the workbook", () => {
+  const sample = async () => {
+    const b = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
+    return readSheet(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
+  };
+
+  it("is a real xlsx with a Load list and a Notes sheet, formulas, a frozen header, filters, drop-downs and notes", async () => {
+    const raw = await sample();
+    const { buffer, rows } = await mccWorkbookBuffer(raw, "sample_load_list.xlsx");
+    expect(rows).toBe(29);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Load list", "Notes"]);
+    const ws = wb.getWorksheet("Load list")!;
+    expect(ws.views[0]).toMatchObject({ state: "frozen", ySplit: 4 });
+    expect(ws.autoFilter).toBeTruthy();
+    const head = ws.getRow(4).values as unknown[];
+    const names = head.map((h) => String(h ?? ""));
+    for (const h of [
+      "Estimated / entered load current (A)", "Calculated Current (A) – specified PF", "Design Current (A)", "Feeder Protection Type",
+      "Indicative Feeder Breaker Rating (A)", "Selected Breaker (MCCB / EDO ACB)", "Overload Relay Setting (A)",
+      "Panel Incomer Breaker Type (MCCB / ACB)", "Panel Incomer Breaker Rating (A)", "CT Ratio (Primary/5 A)", "CT Use / Metering",
+      "Cable Design Current (A)", "Cable size / runs", "Cable length (m)", "Engineering Notes / Checks",
+    ]) expect(names, h).toContain(h);
+    // source columns kept intact, in order
+    expect(names.slice(1, 8)).toEqual(raw[0].map(String));
+    // calculated cells are formulas, not pasted numbers
+    const col = (h: string) => names.indexOf(h);
+    const calc = ws.getRow(5).getCell(col("Calculated Current (A) – specified PF")).value as { formula?: string };
+    expect(calc.formula).toMatch(/SQRT\(3\)/);
+    const design = ws.getRow(5).getCell(col("Design Current (A)")).value as { formula?: string };
+    expect(design.formula).toContain("Notes!$B$8");
+    expect(ws.getRow(5).getCell(col("Feeder Protection Type")).dataValidation?.type).toBe("list");
+    expect(ws.getRow(4).getCell(col("Design Current (A)")).note).toBeTruthy();
+    // original source values untouched
+    expect(ws.getRow(5).getCell(1).value).toBe(raw[1][0]);
+    const notes = wb.getWorksheet("Notes")!;
+    expect(notes.getCell("B4").value).toBe(0.7);
+    expect(notes.getCell("B6").value).toBe(0.9);
+    expect(notes.getCell("B7").value).toBe(0.93);
+    expect(notes.getCell("B8").value).toBe(1.25);
+  });
+
+  it("has no author metadata", async () => {
+    const { buffer } = await mccWorkbookBuffer(await sample(), "s.xlsx");
+    const core = strFromU8(unzipSync(new Uint8Array(buffer))["docProps/core.xml"]);
+    expect(core).not.toMatch(/creator|lastModifiedBy|Unknown/i);
+  });
+
+  it("an incomer row at 800 A gets the 1000 A EDO ACB and a 1000/5 A CT; motor feeders get no CT or incomer", async () => {
+    const raw = await sample();
+    const { buffer } = await mccWorkbookBuffer(raw, "s.xlsx");
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    const ws = wb.getWorksheet("Load list")!;
+    const names = (ws.getRow(4).values as unknown[]).map((h) => String(h ?? ""));
+    const rowOf = (d: string) => {
+      for (let r = 5; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value) === d) return ws.getRow(r);
+      throw new Error(d);
+    };
+    const result = (row: ExcelJS.Row, h: string) => {
+      const v = row.getCell(names.indexOf(h)).value as { formula?: string; result?: unknown } | null;
+      return v && typeof v === "object" && "formula" in v ? (v.result ?? "") : v; // an empty cached result is not stored
+    };
+    const inc = rowOf("MCC-2 incomer");
+    expect(result(inc, "Panel Incomer Breaker Rating (A)")).toBe(1000);
+    expect(result(inc, "CT Ratio (Primary/5 A)")).toBe("1000/5 A");
+    const pump = rowOf("Boiler feed water pump A (duty)");
+    expect(result(pump, "Panel Incomer Breaker Rating (A)")).toBe("");
+    expect(result(pump, "CT Ratio (Primary/5 A)")).toBe("");
+  });
+
+  it("a row with no current data shows blanks and a missing-input note, not zeros", async () => {
+    const raw = [["Description", "Type", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)"], ["Mystery", "DOL", null, null, 433]];
+    const { buffer, missing } = await mccWorkbookBuffer(raw, "s.xlsx");
+    expect(missing).toBe(1);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    const ws = wb.getWorksheet("Load list")!;
+    const names = (ws.getRow(4).values as unknown[]).map((h) => String(h ?? ""));
+    const cell = (h: string) => ws.getRow(5).getCell(names.indexOf(h)).value as { formula?: string; result?: unknown };
+    for (const h of ["Calculated Current (A) – specified PF", "Design Current (A)", "Indicative Feeder Breaker Rating (A)"]) {
+      expect(cell(h).formula, h).toBeTruthy();
+      expect(cell(h).result ?? "", h).toBe(""); // blank, not 0
+    }
+  });
+});

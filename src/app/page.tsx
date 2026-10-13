@@ -13,6 +13,7 @@ export default function Home() {
       <h2>Tools</h2>
       <ul>
         <li><Link href="/transformers">Transformer sizing</Link> – drop a load list (Excel) and get the number and rating of transformers.</li>
+        <li><Link href="/mcc-load-list">MCC Load List / Breaker Selection</Link> – preliminary MCCB / EDO ACB selection for each load, as an Excel workbook.</li>
       </ul>
       <h2>{SAMPLE_PROJECT.name}</h2>
       <ul>
