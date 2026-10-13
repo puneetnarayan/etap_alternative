@@ -1,3 +1,5 @@
+import { parseLoadSheet } from "./transformer-sizing";
+
 /**
  * Preliminary breaker selection for the MCC load list (see docs/mcc-load-list.md).
  * Pure functions: the Excel workbook uses the same rules as formulas, and the tests compare the two.
@@ -120,4 +122,76 @@ export function currentFor(i: CurrentInput, a: MccAssumptions = DEFAULT_MCC_ASSU
     source: pos(i.ratedA) ? "Entered current" : calculatedA !== undefined ? "Calculated" : "Missing input",
     designA: usedA === undefined ? undefined : usedA * a.designMultiplier,
   };
+}
+
+/* ------------------------- rows for the page (same rules as the workbook) ------------------------- */
+
+
+export interface MccRow {
+  rowNumber: number;
+  description: string;
+  status?: "W" | "S";
+  type: MccLoadType;
+  voltageV?: number;
+  kw?: number;
+  ratedA?: number;
+  current: CurrentResult;
+  /** Feeder breaker (preliminary). */
+  breaker: BreakerSelection;
+  /** Overload relay setting (A): DOL motors only. */
+  relayA?: number;
+  isIncomer: boolean;
+  incomer?: BreakerSelection;
+  ctPrimaryA?: number;
+  /** Short flags for the engineering-checks column. */
+  flags: string[];
+}
+
+export interface MccSummary {
+  loads: number;
+  mccb: number;
+  acb: number;
+  review: number;
+  missing: number;
+  verify: number;
+}
+
+const typeOf = (raw: string): MccLoadType => (/vfd/i.test(raw) ? "VFD" : /dol/i.test(raw) ? "DOL" : "FEEDER");
+
+/** Read a load sheet (first row = headers) and work out current and preliminary breaker for each load. */
+export function mccRows(
+  sheet: readonly (readonly unknown[])[],
+  a: MccAssumptions = DEFAULT_MCC_ASSUMPTIONS,
+): { rows: MccRow[]; summary: MccSummary; errors: string[] } {
+  const parsed = parseLoadSheet(sheet.map((r) => [...r]));
+  if (parsed.errors.length) return { rows: [], summary: { loads: 0, mccb: 0, acb: 0, review: 0, missing: 0, verify: 0 }, errors: parsed.errors };
+  const rows = parsed.rows.map((r): MccRow => {
+    const type = typeOf(r.type);
+    const current = currentFor({ type, kw: r.kw, voltageV: r.voltageV, ratedA: r.amps }, a);
+    const breaker = selectBreaker(current.designA);
+    const isIncomer = /incomer/i.test(r.description);
+    const incomer = isIncomer ? (r.amps === 800 ? selectBreaker(current.designA, { existing800AcbIncomer: true }) : breaker) : undefined;
+    const flags: string[] = [];
+    if (current.usedA === undefined) flags.push("Missing input: give a rated current, or kW and voltage");
+    if (current.source === "Calculated" && type === "DOL") flags.push("Provisional motor efficiency");
+    if (type === "VFD") flags.push("Verify VFD input current with the manufacturer");
+    if (breaker.status === "review" && current.designA !== undefined) flags.push(breaker.message);
+    if (breaker.status === "verify") flags.push("Above 630 A: verify ACB rating");
+    if (incomer && r.amps === 800) flags.push("800 A ACB incomer standardised to 1000 A EDO ACB");
+    return {
+      rowNumber: r.rowNumber, description: r.description, status: r.status, type, voltageV: r.voltageV, kw: r.kw, ratedA: r.amps,
+      current, breaker,
+      relayA: type === "DOL" && current.usedA !== undefined ? Math.round(current.usedA * 10) / 10 : undefined,
+      isIncomer, incomer, ctPrimaryA: incomer ? ctPrimaryFor(incomer.ratingA) : undefined, flags,
+    };
+  });
+  const summary: MccSummary = {
+    loads: rows.length,
+    mccb: rows.filter((r) => r.breaker.kind === "MCCB").length,
+    acb: rows.filter((r) => r.breaker.kind === "EDO ACB").length,
+    review: rows.filter((r) => r.current.designA !== undefined && r.breaker.kind === "REVIEW").length,
+    missing: rows.filter((r) => r.current.usedA === undefined).length,
+    verify: rows.filter((r) => r.breaker.status === "verify").length,
+  };
+  return { rows, summary, errors: [] };
 }

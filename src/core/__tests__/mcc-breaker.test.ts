@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
-  breakerLabel, ctPrimaryFor, currentFor, selectBreaker,
+  breakerLabel, ctPrimaryFor, currentFor, mccRows, selectBreaker,
 } from "..";
 import { mccWorkbookBuffer } from "../mcc-workbook";
 
@@ -180,5 +180,45 @@ describe("the workbook", () => {
       expect(cell(h).formula, h).toBeTruthy();
       expect(cell(h).result ?? "", h).toBe(""); // blank, not 0
     }
+  });
+});
+
+describe("rows for the page", () => {
+  const sheet = [
+    ["Description", "Type", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)"],
+    ["Pump", "DOL", null, 185, 433], // 390.6 A calculated, design 488.3 A: review
+    ["Fan", "VFD", null, 200, 433], // 305.5 A, design 381.8 A: 400 A MCCB
+    ["Crusher", "DOL", null, 315, 433], // 665.2 A, design 831.4 A: 1000 A EDO ACB
+    ["Dosing", "DOL", 180, null, 433], // entered 180 A, design 225 A: 250 A MCCB
+    ["MCC-2 incomer", "Feeder", 800, null, 433], // design 1000 A: 1000 A EDO ACB, CT 1000/5
+    ["Unknown", "DOL", null, null, 433],
+  ];
+  const r = mccRows(sheet);
+
+  it("matches the workbook rules, row by row", () => {
+    expect(r.errors).toEqual([]);
+    expect(r.rows.map((x) => breakerLabel(x.breaker))).toEqual([
+      "Engineering review required", "400 A MCCB", "1000 A EDO ACB", "250 A MCCB", "1000 A EDO ACB", "Engineering review required",
+    ]);
+    expect(r.rows[0].current.designA).toBeCloseTo(488.3, 1);
+    expect(r.rows[3].current.source).toBe("Entered current");
+  });
+
+  it("incomer and CT only on the incomer row; relay only on DOL motors with a current", () => {
+    expect(r.rows.map((x) => x.isIncomer)).toEqual([false, false, false, false, true, false]);
+    expect(breakerLabel(r.rows[4].incomer!)).toBe("1000 A EDO ACB");
+    expect(r.rows[4].ctPrimaryA).toBe(1000);
+    expect(r.rows.filter((x) => x.ctPrimaryA !== undefined)).toHaveLength(1);
+    expect(r.rows.map((x) => x.relayA)).toEqual([390.6, undefined, 665.2, 180, undefined, undefined]);
+  });
+
+  it("summary counts, with the row that has no data counted as missing, not as review", () => {
+    expect(r.summary).toEqual({ loads: 6, mccb: 2, acb: 2, review: 1, missing: 1, verify: 2 });
+  });
+
+  it("a sheet without the required columns gives an error and no rows", () => {
+    const bad = mccRows([["Name"], ["x"]]);
+    expect(bad.rows).toEqual([]);
+    expect(bad.errors[0]).toMatch(/Missing column/);
   });
 });
