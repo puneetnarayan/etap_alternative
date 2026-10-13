@@ -159,7 +159,7 @@ function loadHeaders(includePower: boolean, withSection = false): Row {
 function loadCells(l: SizingResult["loads"][number], includePower: boolean, section?: string): Row {
   return [
     ...(section ? [cell(section)] : []),
-    cell(l.rowNumber), cell(l.description), statusCell(l.status ?? ""), cell(l.group ?? ""),
+    cell(l.source === "mcc" ? "" : l.rowNumber), cell(l.description), statusCell(l.status ?? ""), cell(l.group ?? ""),
     treatedAs(l),
     l.ratedKw === undefined ? cell("") : n(l.ratedKw),
     ...(includePower ? [n(l.kw), n(l.kvar), n(l.powerFactor, "0.00")] : []),
@@ -211,7 +211,11 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Loads included", cell(r.loads.length)),
     kv("Working (W) / standby (S)", cell(`${r.loads.filter((l) => l.status === "W").length} W / ${r.loads.filter((l) => l.status === "S").length} S`)),
     kv("Spare feeders added (not in the calculation)", cell(r.spares.length)),
-    kv("Total kVA used for sizing", n(r.totalKva)),
+    kv(op.mccFeeders.length > 0 ? "Total kVA of the load list (before PMCC/IMCC feeders)" : "Total kVA used for sizing", n(r.totalKva)),
+    ...(op.mccFeeders.length > 0
+      ? [kv("PMCC/IMCC feeders added to every set (in the calculation)", cell(op.mccFeeders.map((f) => `${f.count} × ${f.amps} A`).join(", "))),
+         kv("Their placement", cell("Half of each kind on each side of the middle transformer (set of 3) or of the bus coupler (set of 2)"))]
+      : []),
     ...(o.includePower
       ? [
           kv("Total kW (input)", n(r.totals.kw)),
@@ -228,10 +232,10 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     ...(rec ? [kv("Incomers", cell(rec.count)), kv("Bus couplers", cell(rec.count - rec.layout.length))] : []),
     [],
     [label("Numbers of transformers tried")],
-    heads("Transformers", "Sets", "Rating (kVA)", "Fits", "Max load (kVA)", "Average normal loading (%)", "One out loading (%)"),
+    heads("Transformers", "Sets", "Rating (kVA)", "Fits", "Total load (kVA)", "Max load (kVA)", "Average normal loading (%)", "One out loading (%)"),
     ...r.combos.map((c): Row => [
       cell(c.count), cell(c.layout.join(" + "), "center"), cell(c.chosen.ratingKva), verdict(c.fits ? "Yes" : "No", c.fits),
-      n(c.chosen.maxLoadKva), limited(c.chosen.normalPct, normalPct), limited(c.chosen.contingencyPct, contPct),
+      n(c.totalKva), n(c.chosen.maxLoadKva), limited(c.chosen.normalPct, normalPct), limited(c.chosen.contingencyPct, contPct),
     ]),
   ];
   return { sheet: "Summary", data, columns: autoColumns(data) };
@@ -368,6 +372,9 @@ function comboSheet(c: ComboResult, o: ReportOptions, spares: SpareFeeder[]): Re
     banner(c.fits ? "Fits within both limits" : "DOES NOT FIT within both limits", c.fits),
     ...(c.added ? [noteBanner("Added because the loads could not be balanced within the limits with fewer transformers.")] : []),
     [layoutLine],
+    ...(c.mccLoads.length > 0
+      ? [[`Total load ${fmtInt(c.totalKva)} kVA = load list ${fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + ${c.mccLoads.length} PMCC/IMCC feeders ${fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA`] as Row]
+      : []),
     [],
     [label("Ratings considered")],
     heads("Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result"),

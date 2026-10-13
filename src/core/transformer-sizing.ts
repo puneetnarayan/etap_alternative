@@ -49,7 +49,23 @@ export interface SizingOptions {
    * at 420 V; the 433 V label, and matching loads to the 433 V transformer, are unchanged.
    */
   calculationVoltageV: Record<number, number>;
+  /**
+   * Fixed outgoing feeders added to every PMCC / IMCC (every set of transformers): `count` feeders of
+   * `amps` each, counted in the load. Half of each kind goes on each side of the middle transformer of
+   * a set of 3 (the two end sections), or on each side of the bus coupler of a set of 2. Empty = none.
+   */
+  mccFeeders: MccFeeder[];
 }
+
+export interface MccFeeder { amps: number; count: number }
+
+/** 6 x 63 A, 6 x 32 A, 6 x 16 A and 10 x 6 A in each PMCC / IMCC. */
+export const STANDARD_MCC_FEEDERS: MccFeeder[] = [
+  { amps: 63, count: 6 },
+  { amps: 32, count: 6 },
+  { amps: 16, count: 6 },
+  { amps: 6, count: 10 },
+];
 
 /** Standard transformer ratings offered in the UI (kVA). */
 export const STANDARD_RATINGS_KVA = [2000, 2500, 4000];
@@ -65,6 +81,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   stepUp: "min-installed",
   totalBasis: "arithmetic",
   calculationVoltageV: { 433: 420 },
+  mccFeeders: [],
 };
 
 /** Transformer secondary voltage options offered in the UI (primary is 6600 V). */
@@ -111,6 +128,8 @@ export interface SizedLoad {
   powerFactor: number;
   basis: string;
   group?: string;
+  /** "mcc" for the fixed PMCC / IMCC feeders added by the tool (rowNumber 0); absent for loads from the list. */
+  source?: "mcc";
   warnings: string[];
 }
 
@@ -379,6 +398,7 @@ function improveBalance(
   setCap: number[],
   constrained: (key: string) => boolean,
   seed: number,
+  locked: boolean[] = [],
 ): void {
   const n = setOf.length;
   const keys = items.map((l) => {
@@ -432,7 +452,7 @@ function improveBalance(
       let best = { d: -EPS, a: -1, b: -1, t: -1 };
       for (let a = 0; a < items.length; a++) {
         const f = at[a];
-        if (!over(f)) continue;
+        if (locked[a] || !over(f)) continue;
         const x = items[a].kva;
         const ka = keys[a];
         for (let t = 0; t < n; t++) {
@@ -446,6 +466,7 @@ function improveBalance(
             if (d < best.d) best = { d, a, b: -1, t };
           }
           for (const b of members[t]) { // swap a (in f) with b (in t)
+            if (locked[b]) continue;
             budget--;
             const y = items[b].kva;
             const kb = keys[b];
@@ -475,7 +496,7 @@ function improveBalance(
     for (let k = 0; k < kicks; k++) {
       const i = Math.floor(rnd() * items.length);
       const to = Math.floor(rnd() * n);
-      if (to === at[i] || (keys[i] && (groups[to].get(keys[i]) ?? 0) > 0)) continue;
+      if (locked[i] || to === at[i] || (keys[i] && (groups[to].get(keys[i]) ?? 0) > 0)) continue;
       move(i, to);
     }
     climb();
@@ -496,6 +517,8 @@ function improveBalance(
  * exactly equal. If the first placement leaves a section or set over its limit (and `repair` is on),
  * loads are moved and swapped to repair it (see `improveBalance`).
  *
+ * Loads in `fixed` (load -> index of the section, counted over all sets) are put there first and never moved.
+ *
  * With several sets, a set of 2 can carry less than a set of 3 (it is limited by the
  * one-transformer-out case), so sets are filled in proportion to what they can carry.
  */
@@ -506,6 +529,7 @@ export function distributeLoads(
   opts: SizingOptions = DEFAULT_OPTIONS,
   layout: number[] = layoutFor(count),
   repair = true,
+  fixed: Map<SizedLoad, number> = new Map(),
 ): { sections: Section[]; notes: string[] } {
   const sets = layout.reduce((a, k) => a + k, 0) === count ? layout : [count];
   const names: string[] = [];
@@ -536,7 +560,11 @@ export function distributeLoads(
   const usedByGroup = new Map<string, Set<number>>();
   const notes: string[] = [];
 
+  const locked = items.map((l) => fixed.has(l));
+  items.forEach((l, idx) => { if (locked[idx]) buckets[fixed.get(l)!].push(idx); });
+
   items.forEach((load, idx) => {
+    if (locked[idx]) return;
     const key = groupKey(load.group);
     const used = key ? (usedByGroup.get(key) ?? new Set<number>()) : new Set<number>();
     let candidates = buckets.map((_, i) => i).filter((i) => !used.has(i));
@@ -556,7 +584,7 @@ export function distributeLoads(
   buckets.forEach((bk, t) => bk.forEach((i) => { assign[i] = t; }));
   if (repair) {
     const seed = count * 100003 + Math.round(ratingKva) * 31 + items.length;
-    improveBalance(items, assign, setOf, opts.normalLimit * ratingKva, setCap, (k) => (groupSize.get(k) ?? 0) <= count, seed);
+    improveBalance(items, assign, setOf, opts.normalLimit * ratingKva, setCap, (k) => (groupSize.get(k) ?? 0) <= count, seed, locked);
   }
 
   const placed: SizedLoad[][] = Array.from({ length: count }, () => []);
@@ -617,6 +645,10 @@ export interface ComboResult {
   chosen: Candidate;
   fits: boolean;
   sets: SetResult[];
+  /** Fixed PMCC / IMCC feeders added to this combination (empty when none), already included in the sections. */
+  mccLoads: SizedLoad[];
+  /** Total load of this combination (kVA): the load list plus the PMCC / IMCC feeders. */
+  totalKva: number;
   /** All sections / one-out scenarios of all sets, in order. */
   sections: Section[];
   oneOut: OneOutScenario[];
@@ -698,13 +730,51 @@ export interface SizingResult {
   sections?: Section[];
 }
 
-function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: SizingOptions, added = false): ComboResult {
+/**
+ * The fixed feeders of every PMCC / IMCC (one per set), each with the index of the section it sits on:
+ * half of each kind on the first and half on the last section of the set, i.e. on either side of the
+ * middle transformer of a set of 3, or of the bus coupler of a set of 2.
+ */
+function mccFeedersFor(layout: number[], selectedVoltageV: number, opts: SizingOptions): Map<SizedLoad, number> {
+  const out = new Map<SizedLoad, number>();
+  let first = 0;
+  layout.forEach((size, si) => {
+    const sides = [first, first + size - 1];
+    for (const f of opts.mccFeeders) {
+      for (let k = 0; k < f.count; k++) {
+        const r = sizeLoad(
+          { rowNumber: 0, description: `PMCC/IMCC feeder ${f.amps} A (set ${si + 1})`, type: "Feeder", amps: f.amps, voltageV: selectedVoltageV },
+          selectedVoltageV,
+          opts,
+        );
+        if ("load" in r) out.set({ ...r.load, source: "mcc" }, sides[k < Math.ceil(f.count / 2) ? 0 : 1]);
+      }
+    }
+    first += size;
+  });
+  return out;
+}
+
+function buildCombo(
+  rows: SizedLoad[],
+  rawTotalKva: number,
+  count: number,
+  opts: SizingOptions,
+  selectedVoltageV: number,
+  added = false,
+): ComboResult {
+  const fixed = mccFeedersFor(layoutFor(count), selectedVoltageV, opts);
+  const mccLoads = [...fixed.keys()];
+  const loads = [...rows, ...mccLoads];
+  const totalKva = rawTotalKva + combine(mccLoads, opts.totalBasis).kva;
+  // With the "vector" basis the feeders are added as a vector sum with the rest.
+  const comboKva = opts.totalBasis === "vector" ? combine(loads, "vector").kva : totalKva;
   const tried = [...opts.ratingsKva]
     .sort((a, b) => a - b)
     .map((r) => {
-      const ideal = evaluateCandidate(totalKva, count, r, opts);
+      const ideal = evaluateCandidate(comboKva, count, r, opts);
       // Only worth searching for a valid placement when the total fits at all if shared perfectly.
-      const placement = distributeLoads(loads, count, r, opts, ideal.layout, ideal.fits);
+      const placement = distributeLoads(loads, count, r, opts, ideal.layout, ideal.fits, fixed);
       const balanced = isBalanced(placement.sections, ideal.layout, r, opts);
       return { cand: { ...ideal, balanced, fits: ideal.fits && balanced }, placement };
     });
@@ -761,6 +831,8 @@ function buildCombo(loads: SizedLoad[], totalKva: number, count: number, opts: S
     chosen,
     fits: chosen.fits,
     sets,
+    mccLoads,
+    totalKva: comboKva,
     sections,
     oneOut: sets.flatMap((x) => x.oneOut),
     notes,
@@ -831,7 +903,7 @@ export function sizeTransformers(
     .map((l) => `${l.description || `Row ${l.rowNumber}`} (row ${l.rowNumber}, ${fmtInt(l.kva)} kVA) is larger than one transformer section can carry: ${fmtPct(opts.normalLimit * 100)} % of ${fmtInt(biggest)} kVA = ${fmtInt(opts.normalLimit * biggest)} kVA.`);
 
   const start = [...new Set(opts.counts)].filter((n) => n >= 2).sort((a, b) => a - b);
-  const combos = loads.length > 0 ? start.map((n) => buildCombo(loads, totalKva, n, opts)) : [];
+  const combos = loads.length > 0 ? start.map((n) => buildCombo(loads, totalKva, n, opts, selectedVoltageV)) : [];
   // Not balanced within the limits: add transformers (sets of 3 first, a set of 2 at the end for the
   // remainder) until it works or the maximum is reached. Numbers that add no capacity (4, 7, 10 ...) are skipped.
   if (blockers.length === 0 && combos.length > 0) {
@@ -839,7 +911,7 @@ export function sizeTransformers(
     for (let n = Math.max(...start) + 1; !combos.some((c) => c.fits) && n <= opts.maxTransformers; n++) {
       const cap = relativeCapacity(n, opts);
       if (cap <= lastCap + 1e-12) continue;
-      combos.push(buildCombo(loads, totalKva, n, opts, true));
+      combos.push(buildCombo(loads, totalKva, n, opts, selectedVoltageV, true));
       lastCap = cap;
     }
   }

@@ -40,6 +40,9 @@ Whole loads are never split. They are first placed largest-first into the set th
 If that first placement leaves a section or set over its limit, the placement is repaired: loads are moved or swapped between sections while that reduces the excess, and if that gets stuck the best placement is perturbed and improved again (seeded, so results are repeatable; limited work budget). This is a heuristic: "cannot be balanced" means no valid placement was found, not a proof that none exists.
 Not modelled: electrical sharing between sections through the couplers (equal sharing within a set is assumed).
 
+## PMCC / IMCC feeders
+Every set of transformers (every PMCC / IMCC board) gets a fixed block of outgoing feeders, **counted in the load**: 6 × 63 A, 6 × 32 A, 6 × 16 A and 10 × 6 A (28 feeders, 726 A, about 528 kVA at 420 V per board). They are converted like any other amps-only feeder (√3 × 420 V × A for the 433 V level, power factor 0.7). Half of each kind sits on each side of the middle transformer of a set of 3 (the two end sections; the middle section gets none), or on each side of the bus coupler of a set of 2. They are fixed: the balancing never moves them. Each combination tried has its own total (load list + feeders of all its sets), shown in the Summary table and on the combination sheet; the "Total kVA of the load list" in the Summary excludes them. They are listed in the bus layout without a row number. A checkbox on the page (on by default) switches them on or off; in the code `DEFAULT_OPTIONS.mccFeeders` is empty and `STANDARD_MCC_FEEDERS` holds the block above. No spare feeders are added for these ratings.
+
 ## Excel report
 The report is **created and downloaded automatically as soon as the load list is dropped** (file name `<input name>_transformer_sizing_<voltage>V.xlsx`). A switch next to the drop area, **Include kW, kvar and power factor** (on by default), controls those columns. "Download Excel report again" re-creates it for the current voltage / rating / number of transformers.
 
@@ -58,6 +61,7 @@ Formatting:
 - **No author metadata:** the generated file contains no document properties at all (no creator / last-modified-by). The sample file served for download has them removed too.
 
 ## Interpretations to confirm
+- PMCC / IMCC feeders: "each PMCC or IMCC" is read as each set of transformers (one board per set); the feeders are taken as three-phase (√3 × V × A); odd counts would put the extra feeder on the first side.
 - "With one transformer out, 90 %" is applied as a 90 % limit in the one-out case (confirmed).
 - Duty/standby pairs are identified by the optional group column (confirmed).
 - "Number of transformers can be a combination of 2 or 3 only, one bus coupler between the incomers" is read as independent sets of 2 or 3 with couplers only inside a set.
