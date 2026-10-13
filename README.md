@@ -22,6 +22,7 @@ npm run dev
 ## Tools
 
 - **Transformer sizing** (`/transformers`): drop an Excel load list, get the number (2 or 3) and rating of 6.6 kV transformers, the load distribution per combination, and an Excel report. Rules: `docs/transformer-sizing.md`. Sample file: `public/sample_load_list.xlsx`.
+- **MCC Load List / Breaker Selection** (`/mcc-load-list`, sidebar): builds an Excel workbook with currents and preliminary MCCB / EDO ACB selections from the load list. Rules: `docs/mcc-load-list.md`.
 
 ## Roadmap
 

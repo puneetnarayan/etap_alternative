@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import AppShell from "./AppShell";
 
 export const metadata = {
   title: "Open Power Design",
@@ -8,8 +9,8 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: "2rem auto", maxWidth: 1100, padding: "0 1rem" }}>
-        {children}
+      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0 }}>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

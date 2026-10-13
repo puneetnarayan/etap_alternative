@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
+    "fflate": "^0.8.3",
     "next": "^16.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -22,7 +24,6 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "fflate": "^0.8.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }

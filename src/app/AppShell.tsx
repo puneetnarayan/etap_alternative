@@ -1,0 +1,124 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { loadLoadList, saveLoadList } from "./loadListStore";
+
+export type MccStatus =
+  | { kind: "idle" }
+  | { kind: "busy" }
+  | { kind: "done"; name: string; rows: number; missing: number }
+  | { kind: "no-list" }
+  | { kind: "error"; message: string };
+
+interface Shell {
+  status: MccStatus;
+  /** Build the MCC workbook from the stored (or given) load list and download it. Only called from a click. */
+  generate: (source?: { fileName: string; sheet: readonly (readonly unknown[])[] }) => Promise<void>;
+}
+
+const ShellContext = createContext<Shell | null>(null);
+export const useShell = () => {
+  const c = useContext(ShellContext);
+  if (!c) throw new Error("useShell must be used inside AppShell");
+  return c;
+};
+
+function download(buffer: ArrayBuffer, name: string) {
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+
+const ITEMS = [
+  { href: "/", label: "Home", icon: "🏠" },
+  { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
+] as const;
+
+const MCC_TIP =
+  "Purpose: prepares an MCC load schedule with preliminary breaker selections (MCCB / EDO ACB) as an Excel workbook. Click to generate it from your current load list.";
+
+export default function AppShell({ children }: { children: ReactNode }) {
+  // A fresh session always starts expanded.
+  const [open, setOpen] = useState(true);
+  const [status, setStatus] = useState<MccStatus>({ kind: "idle" });
+  const pathname = usePathname();
+  const router = useRouter();
+
+  const generate = useCallback<Shell["generate"]>(async (source) => {
+    const list = source ?? loadLoadList();
+    if (!list) {
+      setStatus({ kind: "no-list" });
+      return;
+    }
+    setStatus({ kind: "busy" });
+    try {
+      if (source) saveLoadList(source.fileName, source.sheet);
+      const { mccWorkbookBuffer } = await import("@/core/mcc-workbook");
+      const { buffer, rows, missing } = await mccWorkbookBuffer(list.sheet, list.fileName);
+      const name = `MCC_Load_List_Breaker_Selection_${stamp()}.xlsx`;
+      download(buffer, name);
+      setStatus({ kind: "done", name, rows, missing });
+    } catch (e) {
+      setStatus({ kind: "error", message: (e as Error).message });
+    }
+  }, []);
+
+  const onMccClick = () => {
+    router.push("/mcc-load-list");
+    void generate();
+  };
+
+  const ctx = useMemo(() => ({ status, generate }), [status, generate]);
+  const link = (active: boolean) => ({
+    display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, textDecoration: "none",
+    color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
+    border: "none", font: "inherit", width: "100%", textAlign: "left" as const,
+  });
+
+  return (
+    <ShellContext.Provider value={ctx}>
+      <div style={{ display: "flex", minHeight: "100vh" }}>
+        <nav
+          aria-label="Main"
+          style={{ width: open ? 250 : 52, flexShrink: 0, borderRight: "1px solid rgba(128,128,128,0.4)", padding: 8, boxSizing: "border-box" }}
+        >
+          <button
+            type="button" aria-label={open ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            style={{ ...link(false), width: 36, justifyContent: "center", fontSize: 20, marginBottom: 8 }}
+          >☰</button>
+          {ITEMS.map((i) => (
+            <Link key={i.href} href={i.href} style={link(pathname === i.href)} title={i.label}>
+              <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
+            </Link>
+          ))}
+          <button
+            type="button" onClick={onMccClick} title={MCC_TIP} aria-label="MCC Load List / Breaker Selection"
+            style={link(pathname === "/mcc-load-list")}
+          >
+            <span aria-hidden>🗄️</span>{open && <span>MCC Load List / Breaker Selection</span>}
+          </button>
+          <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px" }}>
+            {status.kind === "busy" && (open ? "Generating workbook…" : "…")}
+            {status.kind === "done" && open && `✔ ${status.name} downloaded`}
+            {status.kind === "no-list" && open && "No load list yet: import one on the MCC page."}
+            {status.kind === "error" && open && <span role="alert" style={{ color: "#c0392b" }}>Could not generate: {status.message}</span>}
+          </div>
+        </nav>
+        <div style={{ flex: 1, minWidth: 0, padding: "2rem 1.5rem" }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto" }}>{children}</div>
+        </div>
+      </div>
+    </ShellContext.Provider>
+  );
+}
