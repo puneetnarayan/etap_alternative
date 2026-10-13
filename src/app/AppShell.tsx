@@ -108,7 +108,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           >
             <span aria-hidden>🗄️</span>{open && <span>MCC Load List / Breaker Selection</span>}
           </button>
-          <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px" }}>
+          <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px", overflowWrap: "anywhere" }}>
             {status.kind === "busy" && (open ? "Generating workbook…" : "…")}
             {status.kind === "done" && open && `✔ ${status.name} downloaded`}
             {status.kind === "no-list" && open && "No load list yet: import one on the MCC page."}
