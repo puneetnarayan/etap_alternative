@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { readSheet } from "read-excel-file/universal";
 import {
-  DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
+  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
   sizeTransformers,
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
@@ -79,6 +79,7 @@ export default function TransformerSizing() {
   const [pfVfd, setPfVfd] = useState("0.9");
   const [pfFeeder, setPfFeeder] = useState("0.7");
   const [includePower, setIncludePower] = useState(true);
+  const [withMcc, setWithMcc] = useState(true);
   const [report, setReport] = useState<ReportStatus>({ kind: "idle" });
   const input = useRef<HTMLInputElement>(null);
 
@@ -91,7 +92,8 @@ export default function TransformerSizing() {
     powerFactor: { DOL: num(pfDol, 0.7, 0, 1), VFD: num(pfVfd, 0.9, 0, 1), FEEDER: num(pfFeeder, 0.7, 0, 1) },
     ratingsKva: [rating],
     counts: [Number(combination)],
-  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination]);
+    mccFeeders: withMcc ? STANDARD_MCC_FEEDERS : [],
+  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination, withMcc]);
 
   const result = useMemo(() => (rows ? sizeTransformers(rows, tx.secondaryV, opts) : null), [rows, tx, opts]);
   // When the chosen rating cannot carry the load even with the maximum number of transformers,
@@ -195,6 +197,10 @@ export default function TransformerSizing() {
             </label>
           ))}
         </fieldset>
+        <label>
+          <input type="checkbox" checked={withMcc} onChange={(e) => setWithMcc(e.target.checked)} />{" "}
+          Add PMCC/IMCC feeders to every set: {STANDARD_MCC_FEEDERS.map((f) => `${f.count} × ${f.amps} A`).join(", ")} (counted in the load; half on each side of the middle transformer of a set of 3, or of the bus coupler of a set of 2)
+        </label>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Start with</legend>
           {([["3", "3 transformers (3 incomers, 2 bus couplers)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"]] as const).map(([v, label]) => (
@@ -274,7 +280,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
               </div>
             )}
             <div>
-              Total load <b>{fmtInt(result.totalKva)} kVA</b> · {fmtInt(t.kw)} kW · {fmtInt(t.kvar)} kvar · power factor {fmtPf(t.powerFactor)}
+              {opts.mccFeeders.length > 0 ? "Load list" : "Total load"} <b>{fmtInt(result.totalKva)} kVA</b> · {fmtInt(t.kw)} kW · {fmtInt(t.kvar)} kvar · power factor {fmtPf(t.powerFactor)}
             </div>
             {rec && recCombo && (
               <div>
@@ -404,6 +410,11 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
         </table>
       </div>
 
+      {c.mccLoads.length > 0 && (
+        <p style={{ margin: "8px 0" }}>
+          Total load {fmtInt(c.totalKva)} kVA = load list {fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + {c.mccLoads.length} PMCC/IMCC feeders {fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA.
+        </p>
+      )}
       {c.sets.map((set) => (
         <div key={set.index} style={{ marginTop: 12 }}>
           {multi && (
@@ -426,7 +437,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
                       <details><summary>{s.name} ({fmtInt(c.chosen.ratingKva)} kVA)</summary>
                         <ul style={{ margin: "4px 0", textAlign: "left" }}>
                           {s.loads.map((l) => (
-                            <li key={l.rowNumber}>
+                            <li key={`${l.rowNumber}-${l.description}`}>
                               {l.description || `Row ${l.rowNumber}`} {l.status && <Tag value={l.status} />}{l.group ? ` [${l.group}]` : ""} – {fmtInt(l.kva)} kVA
                             </li>
                           ))}

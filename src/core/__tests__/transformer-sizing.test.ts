@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_OPTIONS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet, spareFeeders, spareKey,
-  parseStatus, parseVoltage, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
+  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet, spareFeeders, spareKey,
+  parseStatus, parseVoltage, setCapacityKva, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
 } from "..";
 
 const row = (o: Partial<RawLoadRow>): RawLoadRow => ({ rowNumber: 2, description: "x", type: "", voltageV: 433, ...o });
@@ -627,8 +627,8 @@ describe("spare feeders: one of each type and rating, output only", () => {
       "DOL 90 kW x1", "DOL 185 kW x2", "DOL 180 A x1", "VFD 75 kW x2", "VFD 120 A x1", "FEEDER 250 A x2", "FEEDER 800 A x1",
     ]);
     expect(spares.map((x) => x.description)).toEqual([
-      "Spare DOL motor feeder, 90 kW", "Spare DOL motor feeder, 185 kW", "Spare DOL motor feeder, 180 A",
-      "Spare VFD motor feeder, 75 kW", "Spare VFD motor feeder, 120 A", "Spare feeder, 250 A", "Spare feeder, 800 A",
+      "Spare DOL motor feeder, 90 kW (Spare)", "Spare DOL motor feeder, 185 kW (Spare)", "Spare DOL motor feeder, 180 A (Spare)",
+      "Spare VFD motor feeder, 75 kW (Spare)", "Spare VFD motor feeder, 120 A (Spare)", "Spare feeder, 250 A (Spare)", "Spare feeder, 800 A (Spare)",
     ]);
     expect(new Set(spares.map((x) => x.key)).size).toBe(spares.length);
     // the key is the same one the loads carry
@@ -636,7 +636,7 @@ describe("spare feeders: one of each type and rating, output only", () => {
   });
 
   it("a feeder with a kW rating is a DOL motor, so it gets a DOL spare, not a feeder spare", () => {
-    expect(spareFeeders(loadsOf([{ type: "Feeder", kw: 50 }])).map((x) => x.description)).toEqual(["Spare DOL motor feeder, 50 kW"]);
+    expect(spareFeeders(loadsOf([{ type: "Feeder", kw: 50 }])).map((x) => x.description)).toEqual(["Spare DOL motor feeder, 50 kW (Spare)"]);
   });
 
   it("the sample file gives 12 spares (5 DOL kW, 1 DOL amps, 3 VFD kW, 1 VFD amps, 2 feeders)", () => {
@@ -673,5 +673,67 @@ describe("spare feeders: one of each type and rating, output only", () => {
 
   it("no loads, no spares", () => {
     expect(sizeTransformers([], 433).spares).toEqual([]);
+  });
+});
+
+describe("PMCC / IMCC feeders in every set", () => {
+  const mk = (rows: Partial<RawLoadRow>[]) => rows.map((r, i) => row({ rowNumber: i + 2, description: `L${i}`, ...r }));
+  const MCC = { ...DEFAULT_OPTIONS, ratingsKva: [2000], mccFeeders: STANDARD_MCC_FEEDERS };
+  const perBoardKva = (SQ3 * 420 * (6 * 63 + 6 * 32 + 6 * 16 + 10 * 6)) / 1000; // 726 A = 528.1 kVA
+  const bigRows = () => mk([{ type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "VFD", kw: 250 }]);
+
+  it("is off unless asked for", () => {
+    expect(DEFAULT_OPTIONS.mccFeeders).toEqual([]);
+    const r = sizeTransformers(bigRows(), 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
+    expect(r.combos[0].mccLoads).toEqual([]);
+  });
+
+  it("adds 28 feeders per set, counted in the combination's total (726 A = 528.1 kVA per board)", () => {
+    const r = sizeTransformers(bigRows(), 433, MCC);
+    const c = r.combos[0];
+    expect(c.layout).toEqual([3]);
+    expect(c.mccLoads).toHaveLength(28);
+    expect(c.mccLoads.every((l) => l.source === "mcc" && l.rowNumber === 0 && l.kind === "feeder")).toBe(true);
+    expect(c.mccLoads.reduce((a, l) => a + l.kva, 0)).toBeCloseTo(perBoardKva, 6);
+    expect(perBoardKva).toBeCloseTo(528.1, 1);
+    expect(c.totalKva).toBeCloseTo(r.totalKva + perBoardKva, 6);
+    expect(c.sets[0].kva).toBeCloseTo(c.totalKva, 6);
+    expect(r.totalKva).toBeCloseTo(r.loads.reduce((a, l) => a + l.kva, 0), 6); // the list total excludes them
+  });
+
+  it("set of 3: half of each kind on each end section, none on the middle one", () => {
+    const c = sizeTransformers(bigRows(), 433, MCC).combos[0];
+    const count = (si: number, amps: number) => c.sections[si].loads.filter((l) => l.source === "mcc" && l.amps === amps).length;
+    for (const [amps, half] of [[63, 3], [32, 3], [16, 3], [6, 5]] as const) {
+      expect([count(0, amps), count(1, amps), count(2, amps)]).toEqual([half, 0, half]);
+    }
+  });
+
+  it("set of 2: half of each kind on each side of the bus coupler", () => {
+    const c = sizeTransformers(bigRows(), 433, { ...MCC, counts: [2] }).combos[0];
+    expect(c.layout).toEqual([2]);
+    const count = (si: number, amps: number) => c.sections[si].loads.filter((l) => l.source === "mcc" && l.amps === amps).length;
+    for (const [amps, half] of [[63, 3], [32, 3], [16, 3], [6, 5]] as const) expect([count(0, amps), count(1, amps)]).toEqual([half, half]);
+  });
+
+  it("every set of a combination gets its own board of feeders (3 + 2 = 56)", () => {
+    const rows = mk(Array.from({ length: 12 }, () => ({ type: "Feeder", amps: 1500 })));
+    const c = sizeTransformers(rows, 433, { ...MCC, maxTransformers: 5, counts: [5] }).combos.find((x) => x.count === 5)!;
+    expect(c.layout).toEqual([3, 2]);
+    expect(c.mccLoads).toHaveLength(56);
+    expect(c.totalKva).toBeCloseTo(12 * ((SQ3 * 420 * 1500) / 1000) + 2 * perBoardKva, 6);
+    for (const set of c.sets) {
+      expect(set.sections.flatMap((s) => s.loads).filter((l) => l.source === "mcc")).toHaveLength(28);
+    }
+  });
+
+  it("can tip a list that just fits into needing more transformers", () => {
+    // 3 x 2000 kVA carry at most 4,800 kVA (3 x 1600 normal, 2 x 1800 one out = 3,600 -> limit 3,600)
+    const cap = setCapacityKva(3, 2000);
+    const rows = mk([{ type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }]);
+    const without = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
+    const withMcc = sizeTransformers(rows, 433, MCC);
+    expect(without.combos[0].fits).toBe(true);
+    expect(withMcc.combos[0].fits).toBe(false);
   });
 });

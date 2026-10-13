@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { strFromU8, unzipSync } from "fflate";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, kindColor, parseLoadSheet, sizeTransformers, spareKey, type RawLoadRow, type ReportCell } from "..";
+import { DEFAULT_OPTIONS, REPORT_COLORS, STANDARD_MCC_FEEDERS, buildReportBlob, buildReportSheets, kindColor, parseLoadSheet, sizeTransformers, spareKey, type RawLoadRow, type ReportCell } from "..";
 
 /** Show both a set of 2 and a set of 3 (the page starts with 3 only). */
 const BOTH = { ...DEFAULT_OPTIONS, counts: [2, 3] };
@@ -238,10 +238,10 @@ describe("Excel report formatting", () => {
     const { byName } = await sheetsFor({ ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] });
     const sum = byName["Summary"].data;
     const row2 = sum.find((r) => val(r[0]) === 2 && val(r[1]) === "2")!;
-    expect([row2[3], row2[5], row2[6]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.over, REPORT_COLORS.over]);
+    expect([row2[3], row2[6], row2[7]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.over, REPORT_COLORS.over]);
     expect(val(row2[3])).toBe("No");
     const row3 = sum.find((r) => val(r[0]) === 3 && val(r[1]) === "3")!;
-    expect([row3[3], row3[5], row3[6]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
+    expect([row3[3], row3[6], row3[7]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
     const two = byName["2 Transformers"].data;
     expect(bg(two[1][0])).toBe(REPORT_COLORS.over); // "DOES NOT FIT"
     const t1 = two.find((r) => val(r[0]) === "T1" && r.length === 7)!;
@@ -658,7 +658,9 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
       expect(r.every((c) => bg(c) === GOLD), `row ${i}`).toBe(true); // gold end to end
       expect(val(r[header.indexOf("Description")])).toBe(result.spares[i].description);
       expect(val(r[header.indexOf("Basis")])).toBe("Spare: not included in the calculation");
-      for (const col of ["Row", "W/S", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
+      for (const col of ["Row", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
+      expect(val(r[header.indexOf("W/S")])).toBe("SP");
+      expect(String(val(r[header.indexOf("Description")]))).toMatch(/ \(Spare\)$/);
       const sp = result.spares[i];
       expect(val(r[header.indexOf("Rated kW (motor)")])).toBe(sp.unit === "kW" ? sp.rating : "");
     });
@@ -740,4 +742,17 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
     expect(read["Loads"].some((r) => String(r[0]).startsWith("Spare feeders: one of each type and rating"))).toBe(true);
     expect(sheets.length).toBeGreaterThan(3);
   });
+
+  it("lists them in the bus layout without a row number, and shows the combination total", async () => {
+    const { sheets } = await build({ ...DEFAULT_OPTIONS, ratingsKva: [2000], mccFeeders: STANDARD_MCC_FEEDERS });
+    const byName = Object.fromEntries(sheets.map((x) => [x.sheet, x]));
+    const sum = byName["Summary"].data;
+    expect(sum.some((r) => String(val(r[0])).startsWith("PMCC/IMCC feeders added"))).toBe(true);
+    const combo = Object.entries(byName).find(([k]) => /Transformers$/.test(k))![1].data;
+    const mcc = combo.filter((r) => String(val(r[3]) ?? "").startsWith("PMCC/IMCC feeder"));
+    expect(mcc.length).toBeGreaterThanOrEqual(28);
+    expect(mcc.every((r) => val(r[2]) === "")).toBe(true);
+    expect(combo.some((r) => String(val(r[0])).startsWith("Total load "))).toBe(true);
+  });
 });
+
