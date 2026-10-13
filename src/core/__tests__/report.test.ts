@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { strFromU8, unzipSync } from "fflate";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, kindColor, parseLoadSheet, sizeTransformers, type RawLoadRow, type ReportCell } from "..";
+import { DEFAULT_OPTIONS, REPORT_COLORS, buildReportBlob, buildReportSheets, kindColor, parseLoadSheet, sizeTransformers, spareKey, type RawLoadRow, type ReportCell } from "..";
 
 /** Show both a set of 2 and a set of 3 (the page starts with 3 only). */
 const BOTH = { ...DEFAULT_OPTIONS, counts: [2, 3] };
@@ -276,11 +276,11 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
     return { result, sheets: Object.fromEntries(sheets.map((x) => [x.sheet, x])) };
   };
   /** The element column of the layout tables, in order, with the row cells. */
-  const layout = (rows: ReportCell[][]) => {
+  const layout = (rows: ReportCell[][], withSpares = false) => {
     const heads = rows.map((r, i) => (val(r[0]) === "Element" && val(r[1]) === "Name" ? i : -1)).filter((i) => i >= 0);
     return heads.map((h) => {
       const body: ReportCell[][] = [];
-      for (let i = h + 1; i < rows.length && rows[i].length > 0; i++) body.push(rows[i]);
+      for (let i = h + 1; i < rows.length && rows[i].length > 0; i++) if (withSpares || val(rows[i][0]) !== "Spare feeder") body.push(rows[i]);
       return body;
     });
   };
@@ -364,7 +364,7 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
       const hIdx = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
       const width = rows[hIdx].length;
       expect(width).toBe(includePower ? 13 : 10); // 8 base columns + 3 power columns + kVA + Basis
-      for (const r of layout(rows)[0]) expect(r).toHaveLength(width);
+      for (const r of layout(rows, true)[0]) expect(r).toHaveLength(width); // spare rows line up too
     }
   });
 
@@ -482,7 +482,7 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     const loads = sheets.find((x) => x.sheet === "Loads")!.data;
     const header = loads[0].map((c) => String(val(c)));
     const ws = header.indexOf("W/S"), treated = header.indexOf("Treated as");
-    const body = loads.slice(1, -1);
+    const body = loads.slice(1, loads.findIndex((r) => val(r[1]) === "Total"));
     expect(body).toHaveLength(result.loads.length);
     body.forEach((r, i) => {
       const l = result.loads[i];
@@ -503,7 +503,7 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     }
     // legend row lists the five shades
     const legend = three.find((r) => val(r[0]) === "Incomer" && val(r[1]) === "Bus coupler")!;
-    expect(legend.map((c) => st(c)?.backgroundColor)).toEqual([REPORT_COLORS.incomer, REPORT_COLORS.coupler, undefined, NEW.W, NEW.S, NEW.DOL, NEW.VFD, NEW.Feeder]);
+    expect(legend.map((c) => st(c)?.backgroundColor)).toEqual([REPORT_COLORS.incomer, REPORT_COLORS.coupler, undefined, NEW.W, NEW.S, NEW.DOL, NEW.VFD, NEW.Feeder, REPORT_COLORS.spare]);
     // original sheet: the W / S / DOL / VFD / Feeder cells are shaded, everything else is not
     const orig = sheets.find((x) => x.sheet === "Original load list")!.data;
     let shaded = 0;
@@ -592,10 +592,11 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     // W/S column on Loads (header "W/S") is centred, including blank cells
     const loads = sheets.find((x) => x.sheet === "Loads")!.data;
     const ws = loads[0].map((c) => String(val(c))).indexOf("W/S");
-    for (const r of loads.slice(1, -1)) expect(st(r[ws])!.align).toBe("center");
+    const upToTotal = loads.slice(1, loads.findIndex((r) => val(r[1]) === "Total"));
+    for (const r of upToTotal) expect(st(r[ws])!.align).toBe("center");
     // descriptions stay left-aligned
     const desc = loads[0].map((c) => String(val(c))).indexOf("Description");
-    for (const r of loads.slice(1, -1)) expect(st(r[desc])!.align).toBe("left");
+    for (const r of upToTotal) expect(st(r[desc])!.align).toBe("left");
   });
 
   it("the real .xlsx file carries the pastel fills, the number formats and centring, and no author metadata", async () => {
@@ -613,5 +614,130 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     for (const [name, bytes] of Object.entries(parts)) {
       expect(strFromU8(bytes), name).not.toMatch(/dc:creator|lastModifiedBy|Puneet|Narayan/i);
     }
+  });
+});
+
+describe("Excel report: spare feeders (one of each type and rating, highlighted, not in the calculation)", () => {
+  const bg = (c: ReportCell) => (c !== null && typeof c === "object" ? c.backgroundColor : undefined);
+  const val = (c: ReportCell) => (c !== null && typeof c === "object" ? c.value : c);
+  const build = async (opts = BOTH, includePower = true) => {
+    const raw = await readSheet(buf);
+    const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
+    return { result, sheets: buildReportSheets(result, { transformerLabel: "6600 / 433 V", options: opts, includePower, originalSheet: raw }) };
+  };
+  const GOLD = REPORT_COLORS.spare;
+
+  it("the spare colour is a new one, clearly different from every other shade in the report", () => {
+    expect(GOLD).toBe("#FFD966");
+    const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const lab = (h: string) => {
+      const [r, g, b] = rgb(h).map((c) => c / 255).map((c) => (c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92));
+      const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+      const X = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047), Y = f(0.2126 * r + 0.7152 * g + 0.0722 * b), Z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+      return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+    };
+    const dE = (a: string, b: string) => Math.hypot(...lab(a).map((v, i) => v - lab(b)[i]));
+    const others = Object.entries(REPORT_COLORS).filter(([k]) => !["spare", "border"].includes(k)).map(([, v]) => v);
+    expect(others).toHaveLength(10);
+    for (const o of others) expect(dE(GOLD, o), `vs ${o}`).toBeGreaterThan(30);
+  });
+
+  it("Loads sheet: below the Total row, one gold spare row per type and rating, with no kW / kvar / kVA figures", async () => {
+    const { result, sheets } = await build();
+    const loads = sheets.find((x) => x.sheet === "Loads")!.data;
+    const totalIdx = loads.findIndex((r) => val(r[1]) === "Total");
+    const after = loads.slice(totalIdx + 1);
+    expect(after[0]).toEqual([]);
+    expect(String(val(after[1][0]))).toContain("Spare feeders: one of each type and rating (not included in the calculation)");
+    const header = after[2].map((c) => String(val(c)));
+    expect(header).toEqual(loads[0].map((c) => String(val(c)))); // same columns as the loads
+    const spareRows = after.slice(3);
+    expect(spareRows).toHaveLength(result.spares.length);
+    expect(spareRows).toHaveLength(12);
+    spareRows.forEach((r, i) => {
+      expect(r.every((c) => bg(c) === GOLD), `row ${i}`).toBe(true); // gold end to end
+      expect(val(r[header.indexOf("Description")])).toBe(result.spares[i].description);
+      expect(val(r[header.indexOf("Basis")])).toBe("Spare: not included in the calculation");
+      for (const col of ["Row", "W/S", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
+      const sp = result.spares[i];
+      expect(val(r[header.indexOf("Rated kW (motor)")])).toBe(sp.unit === "kW" ? sp.rating : "");
+    });
+    // the Total row is the total of the loads only
+    const kva = header.indexOf("kVA");
+    const loadRows = loads.slice(1, totalIdx);
+    expect(Number(val(loads[totalIdx][kva]))).toBeCloseTo(result.totalKva, 6);
+    expect(loadRows.reduce((a, r) => a + Number(val(r[kva])), 0)).toBeCloseTo(result.totalKva, 6);
+  });
+
+  it("Summary says how many spares were added; the totals are those of the loads", async () => {
+    const { result, sheets } = await build();
+    const sum = sheets[0].data;
+    expect(val(sum.find((r) => val(r[0]) === "Spare feeders added (not in the calculation)")![1])).toBe(12);
+    expect(val(sum.find((r) => val(r[0]) === "Total kVA used for sizing")![1])).toBeCloseTo(result.totalKva, 9);
+    expect(val(sum.find((r) => val(r[0]) === "Loads included")![1])).toBe(result.loads.length);
+  });
+
+  it("bus layout: each spare sits right after a load of the same type and rating, one of each in total, gold end to end", async () => {
+    const { result, sheets } = await build();
+    for (const name of ["2 Transformers", "3 Transformers"]) {
+      const rows = sheets.find((x) => x.sheet === name)!.data;
+      const spareRows = rows.filter((r) => val(r[0]) === "Spare feeder");
+      expect(spareRows, name).toHaveLength(result.spares.length);
+      expect(new Set(spareRows.map((r) => val(r[3]))).size).toBe(result.spares.length); // each description once
+      rows.forEach((r, i) => {
+        if (val(r[0]) !== "Spare feeder") return;
+        expect(r.every((c) => bg(c) === GOLD)).toBe(true);
+        const prev = rows[i - 1];
+        expect(val(prev[0]), `${name}: spare ${val(r[3])} follows a load`).toBe("Outgoing load");
+        expect(val(prev[1])).toBe(val(r[1])); // same section
+        // same type and rating as the load before it
+        const sp = result.spares.find((x) => x.description === val(r[3]))!;
+        const twin = result.loads.find((l) => l.rowNumber === Number(val(prev[2])))!;
+        expect(spareKey(twin)).toBe(sp.key);
+      });
+    }
+  });
+
+  it("the spares do not change the bus layout figures: incomer rows still equal the sum of their outgoing loads", async () => {
+    const { sheets, result } = await build();
+    const rows = sheets.find((x) => x.sheet === "3 Transformers")!.data;
+    const h = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
+    const body: ReportCell[][] = [];
+    for (let i = h + 1; i < rows.length && rows[i].length > 0; i++) body.push(rows[i]);
+    const kvaCol = body[0].length - 2;
+    const sums: Record<string, number> = {};
+    const incomer: Record<string, number> = {};
+    for (const r of body) {
+      const kind = val(r[0]);
+      if (kind === "Outgoing load") sums[String(val(r[1]))] = (sums[String(val(r[1]))] ?? 0) + Number(val(r[kvaCol]));
+      if (kind === "Incomer") incomer[String(val(r[1]))] = Number(val(r[kvaCol]));
+      if (kind === "Spare feeder") expect(val(r[kvaCol])).toBe(""); // nothing to add up
+    }
+    for (const t of Object.keys(incomer)) expect(sums[t]).toBeCloseTo(incomer[t], 6);
+    expect(Object.values(incomer).reduce((a, b) => a + b, 0)).toBeCloseTo(result.totalKva, 6);
+  });
+
+  it("several sets: still one spare of each, shared across the sets", async () => {
+    const rows: RawLoadRow[] = Array.from({ length: 60 }, (_, i) => ({
+      rowNumber: i + 2, description: `F${i}`, type: i % 2 ? "DOL" : "Feeder", voltageV: 433, status: "W" as const,
+      ...(i % 2 ? { kw: 100 + (i % 6) * 10 } : { amps: 250 + (i % 3) * 50 }),
+    }));
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [5] };
+    const result = sizeTransformers(rows, 433, opts);
+    const sheet = buildReportSheets(result, { transformerLabel: "x", options: opts, includePower: false }).find((x) => x.sheet === "5 Transformers")!;
+    const spareRows = sheet.data.filter((r) => val(r[0]) === "Spare feeder");
+    expect(spareRows).toHaveLength(result.spares.length);
+    expect(result.spares.length).toBe(3 + 3); // DOL 110 / 130 / 150 kW (odd rows) + feeders 250 / 300 / 350 A (even rows)
+  });
+
+  it("the real .xlsx carries the gold fill and the spare rows", async () => {
+    const { result, sheets } = await build();
+    const blob = await buildReportBlob(result, { transformerLabel: "x", options: BOTH, includePower: true, originalSheet: await readSheet(buf) });
+    const parts = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    expect(strFromU8(parts["xl/styles.xml"]).toUpperCase()).toContain("FFFFD966");
+    const read = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((x) => [x.sheet, x.data]));
+    expect(read["3 Transformers"].filter((r) => r[0] === "Spare feeder")).toHaveLength(12);
+    expect(read["Loads"].some((r) => String(r[0]).startsWith("Spare feeders: one of each type and rating"))).toBe(true);
+    expect(sheets.length).toBeGreaterThan(3);
   });
 });

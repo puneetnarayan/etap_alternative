@@ -1,6 +1,9 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
-import { displayCombos, failureReason, type ComboResult, type SetResult, type SizingOptions, type SizingResult } from "./transformer-sizing";
+import {
+  displayCombos, failureReason, spareKey,
+  type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
+} from "./transformer-sizing";
 
 /** Colours used in the Excel report. */
 export const REPORT_COLORS = {
@@ -15,6 +18,8 @@ export const REPORT_COLORS = {
   dol: "#BACEF3", // DOL: periwinkle blue
   vfd: "#CBFBB1", // VFD: lime
   feeder: "#D8D4CA", // Feeder: sand
+  // Spare feeders (one of each type and rating, not in the calculation): a stronger gold so they stand out.
+  spare: "#FFD966",
   border: "#BFBFBF",
 } as const;
 
@@ -162,6 +167,20 @@ function loadCells(l: SizingResult["loads"][number], includePower: boolean, sect
   ];
 }
 
+/**
+ * A spare feeder row: same columns as a load row, shaded gold end to end. It shows the type and
+ * rating only; there are no kW / kvar / kVA values because a spare is not part of any total.
+ */
+function spareCells(sp: SpareFeeder, includePower: boolean, lead: Row): Row {
+  return tint([
+    ...lead,
+    cell(""), cell(sp.description), cell(""), cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
+    sp.unit === "kW" ? n(sp.rating) : cell(""),
+    ...(includePower ? [cell(""), cell(""), cell("")] : []),
+    cell(""), cell("Spare: not included in the calculation"),
+  ], REPORT_COLORS.spare);
+}
+
 /* --------------------------------- sheets --------------------------------- */
 
 function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
@@ -191,6 +210,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     blockHeader("Total load"),
     kv("Loads included", cell(r.loads.length)),
     kv("Working (W) / standby (S)", cell(`${r.loads.filter((l) => l.status === "W").length} W / ${r.loads.filter((l) => l.status === "S").length} S`)),
+    kv("Spare feeders added (not in the calculation)", cell(r.spares.length)),
     kv("Total kVA used for sizing", n(r.totalKva)),
     ...(o.includePower
       ? [
@@ -258,6 +278,14 @@ function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
     ...r.loads.map((l) => loadCells(l, o.includePower)),
     [cell(""), bold("Total"), cell(""), cell(""), cell(""), cell(""), ...power, n(r.totalKva), cell("")],
   ];
+  if (r.spares.length > 0) {
+    rows.push(
+      [],
+      [label("Spare feeders: one of each type and rating (not included in the calculation)")],
+      loadHeaders(o.includePower),
+      ...r.spares.map((sp) => spareCells(sp, o.includePower, [])),
+    );
+  }
   return { sheet: "Loads", data: rows, columns: autoColumns(rows), stickyRowsCount: 1 };
 }
 
@@ -283,7 +311,7 @@ function layoutHeaders(includePower: boolean): Row {
  *   set of 2:  Incomer T1 | loads T1 | Bus coupler BC1 | loads T2 | Incomer T2
  *   set of 3:  Incomer T1 | loads T1 | BC1 | Incomer T2 | loads T2 | BC2 | loads T3 | Incomer T3
  */
-export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions): Row[] {
+export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions, spares: SpareFeeder[] = [], placed: Set<string> = new Set()): Row[] {
   const multi = c.sets.length > 1;
   const R = c.chosen.ratingKva;
   const k = set.sections.length;
@@ -306,8 +334,16 @@ export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions):
       empty(), cell(`Ties bus sections ${a} and ${b}`),
     ], REPORT_COLORS.coupler);
   };
+  // Each spare feeder sits right after the first load of the same type and rating (one spare in total, not one per section).
   const loads = (i: number): Row[] =>
-    set.sections[i].loads.map((l): Row => [cell("Outgoing load"), ...loadCells(l, o.includePower, set.sections[i].name)]);
+    set.sections[i].loads.flatMap((l): Row[] => {
+      const row: Row = [cell("Outgoing load"), ...loadCells(l, o.includePower, set.sections[i].name)];
+      const key = spareKey(l);
+      const spare = key !== null && !placed.has(key) ? spares.find((x) => x.key === key) : undefined;
+      if (!spare) return [row];
+      placed.add(spare.key);
+      return [row, spareCells(spare, o.includePower, [cell("Spare feeder"), cell(set.sections[i].name)])];
+    });
 
   const rows: Row[] = [];
   for (let i = 0; i < k; i++) {
@@ -317,7 +353,8 @@ export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions):
   return rows;
 }
 
-function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
+function comboSheet(c: ComboResult, o: ReportOptions, spares: SpareFeeder[]): ReportSheet {
+  const placed = new Set<string>();
   const op = o.options;
   const normalPct = op.normalLimit * 100;
   const contPct = op.contingencyLimit * 100;
@@ -374,12 +411,13 @@ function comboSheet(c: ComboResult, o: ReportOptions): ReportSheet {
       { value: "DOL", align: "center", backgroundColor: REPORT_COLORS.dol, ...BORDER },
       { value: "VFD", align: "center", backgroundColor: REPORT_COLORS.vfd, ...BORDER },
       { value: "Feeder", align: "center", backgroundColor: REPORT_COLORS.feeder, ...BORDER },
+      { value: "Spare feeder", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.spare, ...BORDER },
     ],
     [],
     ...c.sets.flatMap((set): Row[] => [
       ...(multi ? ([[label(`Set ${set.index}`)]] as Row[]) : []),
       layoutHeaders(o.includePower),
-      ...busLayoutRows(set, c, o),
+      ...busLayoutRows(set, c, o, spares, placed),
       [],
     ]),
   ];
@@ -400,7 +438,7 @@ export function buildReportSheets(result: SizingResult, o: ReportOptions): Repor
     summarySheet(result, o),
     ...(o.originalSheet ? [originalSheet(o.originalSheet)] : []),
     loadsSheet(result, o),
-    ...displayCombos(result).map((c) => comboSheet(c, o)),
+    ...displayCombos(result).map((c) => comboSheet(c, o, result.spares)),
     ...(result.issues.length > 0 ? [issuesSheet(result)] : []),
   ];
   // Wide tables print better in landscape.

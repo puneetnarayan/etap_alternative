@@ -122,6 +122,19 @@ describe("the downloadable sample file", () => {
     expect(crusher.kva).toBeCloseTo(315 / (0.7 * 0.95), 6);
   });
 
+  it("one spare feeder of each type and rating, output only: 12 for this file, and they change no number", async () => {
+    const r = sizeTransformers((await load()).rows, 433);
+    expect(r.spares.map((x) => x.description)).toEqual([
+      "Spare DOL motor feeder, 90 kW", "Spare DOL motor feeder, 132 kW", "Spare DOL motor feeder, 160 kW", "Spare DOL motor feeder, 185 kW",
+      "Spare DOL motor feeder, 315 kW", "Spare DOL motor feeder, 180 A",
+      "Spare VFD motor feeder, 75 kW", "Spare VFD motor feeder, 200 kW", "Spare VFD motor feeder, 250 kW", "Spare VFD motor feeder, 120 A",
+      "Spare feeder, 250 A", "Spare feeder, 800 A",
+    ]);
+    expect(r.spares.find((x) => x.rating === 250 && x.unit === "kW")!.count).toBe(3); // three ID fans
+    expect(r.totalKva).toBeCloseTo(TOTAL_433, 6); // unchanged by the spares
+    expect(r.loads).toHaveLength(18);
+  });
+
   it("the Excel report for it: original sheet included unchanged, W/S counts, recommendation", async () => {
     const raw = await readSheet(buf);
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
