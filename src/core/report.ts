@@ -168,17 +168,17 @@ function loadCells(l: SizingResult["loads"][number], includePower: boolean, sect
 }
 
 /**
- * A spare feeder row: same columns as a load row, shaded gold end to end. It shows the type and
+ * A spare feeder row: same columns as a load row; only its SP cell (W/S column) has the gold background. It shows the type and
  * rating only; there are no kW / kvar / kVA values because a spare is not part of any total.
  */
 function spareCells(sp: SpareFeeder, includePower: boolean, lead: Row): Row {
-  return tint([
+  return [
     ...lead,
-    cell(""), cell(sp.description), cell("SP", "center"), cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
+    cell(""), cell(sp.description), { value: "SP", align: "center", backgroundColor: REPORT_COLORS.spare, ...BORDER }, cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
     sp.unit === "kW" ? n(sp.rating) : cell(""),
     ...(includePower ? [cell(""), cell(""), cell("")] : []),
     cell(""), cell("Spare: not included in the calculation"),
-  ], REPORT_COLORS.spare);
+  ];
 }
 
 /* --------------------------------- sheets --------------------------------- */
