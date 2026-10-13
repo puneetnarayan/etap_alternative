@@ -105,7 +105,7 @@ describe("candidates", () => {
 describe("distributeLoads", () => {
   const mk = (specs: [number, string?][]): SizedLoad[] => specs.map(([kva, group], i) => ({
     rowNumber: i + 2, description: `L${i}`, kind: "motor", type: "DOL", voltageV: 433, kw: kva * 0.7,
-    kvar: Math.sqrt(kva * kva - (kva * 0.7) ** 2), kva, powerFactor: 0.7, basis: "", group, warnings: [],
+    kvar: Math.sqrt(kva * kva - (kva * 0.7) ** 2), kva, current: 0, powerFactor: 0.7, basis: "", group, warnings: [],
   }));
   it("keeps every load exactly once and balances within the largest load", () => {
     const loads = mk([[500], [400], [300], [250], [200], [150], [100], [90], [60]]);
@@ -739,3 +739,27 @@ describe("PMCC / IMCC feeders in every set", () => {
     expect(withMcc.combos[0].fits).toBe(false);
   });
 });
+
+describe("current of each load (kVA ÷ (√3 × V))", () => {
+  it("hand-calculated: 185 kW DOL = 382.4 A, 250 kW VFD = 401.9 A at 420 V; 450 kW DOL = 566.2 A at 690 V", () => {
+    expect(loadOf({ type: "DOL", kw: 185 }).current).toBeCloseTo(382.4, 1); // 185 / (0.7 x 0.95) = 278.2 kVA
+    expect(loadOf({ type: "VFD", kw: 250 }).current).toBeCloseTo(401.9, 1); // 250 / (0.9 x 0.95) = 292.4 kVA
+    expect(loadOf({ type: "DOL", kw: 450, voltageV: 690 }, 690).current).toBeCloseTo(566.2, 1);
+  });
+
+  it("an amps-only load gets its own amps back, whatever the type", () => {
+    for (const type of ["DOL", "VFD", "Feeder"]) expect(loadOf({ type, amps: 180 }).current).toBeCloseTo(180, 9);
+    expect(loadOf({ type: "Feeder", amps: 800, voltageV: 690 }, 690).current).toBeCloseTo(800, 9);
+  });
+
+  it("the PMCC/IMCC feeders show their rating when counted and 0 when not", () => {
+    const c = sizeTransformers(mkRows(), 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000], mccFeeders: STANDARD_MCC_FEEDERS }).combos[0];
+    const counted = c.mccLoads.filter((l) => l.kva > 0);
+    expect(counted).toHaveLength(18);
+    for (const l of counted) expect(l.current).toBeCloseTo(l.amps!, 9);
+    expect(c.mccLoads.filter((l) => l.kva === 0).every((l) => l.current === 0)).toBe(true);
+  });
+});
+function mkRows(): RawLoadRow[] {
+  return [{ rowNumber: 2, description: "a", type: "DOL", kw: 185, voltageV: 433 }];
+}

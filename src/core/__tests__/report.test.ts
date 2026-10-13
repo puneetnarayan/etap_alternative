@@ -363,7 +363,7 @@ describe("Excel bus layout: incomers (cyan), outgoing loads, bus couplers (light
       const rows = sheets["3 Transformers"].data;
       const hIdx = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
       const width = rows[hIdx].length;
-      expect(width).toBe(includePower ? 13 : 10); // 8 base columns + 3 power columns + kVA + Basis
+      expect(width).toBe(includePower ? 14 : 11); // 8 base columns + 3 power columns + kVA + Current + Basis
       for (const r of layout(rows, true)[0]) expect(r).toHaveLength(width); // spare rows line up too
     }
   });
@@ -707,7 +707,7 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
     const h = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
     const body: ReportCell[][] = [];
     for (let i = h + 1; i < rows.length && rows[i].length > 0; i++) body.push(rows[i]);
-    const kvaCol = body[0].length - 2;
+    const kvaCol = body[0].length - 3;
     const sums: Record<string, number> = {};
     const incomer: Record<string, number> = {};
     for (const r of body) {
@@ -754,6 +754,26 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
     expect(mcc.length).toBeGreaterThanOrEqual(28);
     expect(mcc.every((r) => val(r[2]) === "")).toBe(true);
     expect(combo.some((r) => String(val(r[0])).startsWith("Total load "))).toBe(true);
+  });
+
+  it("a Current (A) column follows kVA on the Loads sheet and in the bus layout (incomers too, whole numbers, centred)", async () => {
+    const { sheets, result } = await build();
+    const loads = sheets.find((x) => x.sheet === "Loads")!.data;
+    const h = loads[0].map((c) => String(val(c)));
+    expect(h.indexOf("Current (A)")).toBe(h.indexOf("kVA") + 1);
+    expect(h.indexOf("Basis")).toBe(h.indexOf("Current (A)") + 1);
+    result.loads.forEach((l, i) => {
+      const c = loads[i + 1][h.indexOf("Current (A)")] as { value: number; format: string; align: string };
+      expect(c.value).toBeCloseTo(l.current, 9);
+      expect([c.format, c.align]).toEqual(["#,##0", "center"]);
+    });
+    const rows = sheets.find((x) => x.sheet === "3 Transformers")!.data;
+    const lh = rows.findIndex((r) => val(r[0]) === "Element" && val(r[1]) === "Name");
+    const lay = rows[lh].map((c) => String(val(c)));
+    const ci = lay.indexOf("Current (A)");
+    expect(ci).toBe(lay.indexOf("kVA") + 1);
+    const inc = rows.slice(lh + 1).find((r) => val(r[0]) === "Incomer")!;
+    expect(Number(val(inc[ci]))).toBeCloseTo((Number(val(inc[lay.indexOf("kVA")])) * 1000) / (Math.sqrt(3) * 420), 6);
   });
 });
 

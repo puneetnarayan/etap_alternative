@@ -1,7 +1,7 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
 import {
-  displayCombos, failureReason, spareKey,
+  currentOf, displayCombos, failureReason, spareKey,
   type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
 } from "./transformer-sizing";
 
@@ -152,7 +152,7 @@ function loadHeaders(includePower: boolean, withSection = false): Row {
     ...(withSection ? ["Transformer"] : []),
     "Row", "Description", "W/S", "Duty/standby group", "Treated as", "Rated kW (motor)",
     ...(includePower ? ["kW (input)", "kvar", "Power factor"] : []),
-    "kVA", "Basis",
+    "kVA", "Current (A)", "Basis",
   );
 }
 
@@ -163,7 +163,7 @@ function loadCells(l: SizingResult["loads"][number], includePower: boolean, sect
     treatedAs(l),
     l.ratedKw === undefined ? cell("") : n(l.ratedKw),
     ...(includePower ? [n(l.kw), n(l.kvar), n(l.powerFactor, "0.00")] : []),
-    n(l.kva), cell(l.basis),
+    n(l.kva), l.source === "mcc" && l.kva === 0 ? cell("") : n(l.current), cell(l.basis),
   ];
 }
 
@@ -177,7 +177,7 @@ function spareCells(sp: SpareFeeder, includePower: boolean, lead: Row): Row {
     cell(""), cell(sp.description), { value: "SP", align: "center", backgroundColor: REPORT_COLORS.spare, ...BORDER }, cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
     sp.unit === "kW" ? n(sp.rating) : cell(""),
     ...(includePower ? [cell(""), cell(""), cell("")] : []),
-    cell(""), cell("Spare: not included in the calculation"),
+    cell(""), cell(""), cell("Spare: not included in the calculation"),
   ];
 }
 
@@ -280,7 +280,7 @@ function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
   const rows: Row[] = [
     loadHeaders(o.includePower),
     ...r.loads.map((l) => loadCells(l, o.includePower)),
-    [cell(""), bold("Total"), cell(""), cell(""), cell(""), cell(""), ...power, n(r.totalKva), cell("")],
+    [cell(""), bold("Total"), cell(""), cell(""), cell(""), cell(""), ...power, n(r.totalKva), cell(""), cell("")],
   ];
   if (r.spares.length > 0) {
     rows.push(
@@ -305,7 +305,7 @@ function layoutHeaders(includePower: boolean): Row {
   return heads(
     "Element", "Name", "Row", "Description", "W/S", "Duty/standby group", "Treated as", "Rated kW (motor)",
     ...(includePower ? ["kW (input)", "kvar", "Power factor"] : []),
-    "kVA", "Basis",
+    "kVA", "Current (A)", "Basis",
   );
 }
 
@@ -318,6 +318,7 @@ function layoutHeaders(includePower: boolean): Row {
 export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions, spares: SpareFeeder[] = [], placed: Set<string> = new Set()): Row[] {
   const multi = c.sets.length > 1;
   const R = c.chosen.ratingKva;
+  const calcV = o.options.calculationVoltageV[c.voltageV] ?? c.voltageV;
   const k = set.sections.length;
   const pf = (kw: number, kvar: number) => (kw === 0 && kvar === 0 ? 0 : kw / Math.hypot(kw, kvar));
   const empty = (): ReportCell => cell("");
@@ -326,7 +327,7 @@ export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions, 
     return tint([
       cell("Incomer"), cell(s.name), empty(), cell(`Incomer from ${s.name}: ${R} kVA transformer, ${o.transformerLabel}`), empty(), empty(), empty(), empty(),
       ...(o.includePower ? [n(s.kw), n(s.kvar), n(pf(s.kw, s.kvar), "0.00")] : []),
-      n(s.kva), cell(`Section load: ${fmtPct(s.loadingPct)} % of ${fmtInt(R)} kVA (normal limit ${fmtPct(o.options.normalLimit * 100)} %)`),
+      n(s.kva), n(currentOf(s.kva, calcV)), cell(`Section load: ${fmtPct(s.loadingPct)} % of ${fmtInt(R)} kVA (normal limit ${fmtPct(o.options.normalLimit * 100)} %)`),
     ], REPORT_COLORS.incomer);
   };
   const coupler = (i: number): Row => {
@@ -335,7 +336,7 @@ export function busLayoutRows(set: SetResult, c: ComboResult, o: ReportOptions, 
     return tint([
       cell("Bus coupler"), cell(multi ? `S${set.index}-BC${i + 1}` : `BC${i + 1}`), empty(), cell(`Bus coupler between ${a} and ${b}`), empty(), empty(), empty(), empty(),
       ...(o.includePower ? [empty(), empty(), empty()] : []),
-      empty(), cell(`Ties bus sections ${a} and ${b}`),
+      empty(), empty(), cell(`Ties bus sections ${a} and ${b}`),
     ], REPORT_COLORS.coupler);
   };
   // Each spare feeder sits right after the first load of the same type and rating (one spare in total, not one per section).
