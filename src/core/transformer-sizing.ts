@@ -134,6 +134,11 @@ export interface SizedLoad {
   kw: number;
   kvar: number;
   kva: number;
+  /**
+   * Current (A) at the calculation voltage: kVA ÷ (√3 × V), with the power factors and efficiency used for kVA
+   * (so the amps given for an amps-only load come back unchanged).
+   */
+  current: number;
   powerFactor: number;
   basis: string;
   group?: string;
@@ -151,6 +156,8 @@ export interface RowIssue {
 
 const SQRT3 = Math.sqrt(3);
 const kvarOf = (kw: number, kva: number) => Math.sqrt(Math.max(kva * kva - kw * kw, 0));
+/** Three-phase current (A) for kVA at line voltage V. */
+export const currentOf = (kva: number, volts: number) => (kva * 1000) / (SQRT3 * volts);
 const VOLTAGE_MATCH_TOLERANCE = 0.01;
 
 function normaliseType(raw: string): LoadType | "UNKNOWN" {
@@ -217,6 +224,7 @@ export function sizeLoad(
         kw: kwIn,
         kvar: kvarOf(kwIn, kva),
         kva,
+        current: currentOf(kva, opts.calculationVoltageV[voltageV] ?? voltageV),
         powerFactor: pf,
         basis: `kW ÷ (pf ${pf} × η ${opts.efficiency})`,
         group: row.group,
@@ -246,6 +254,7 @@ export function sizeLoad(
       kw: kva * pf,
       kvar: kvarOf(kva * pf, kva),
       kva,
+      current: currentOf(kva, calcV),
       powerFactor: pf,
       basis: `√3 × ${calcV} V × ${amps} A (kW shown at pf ${pf})`,
       group: row.group,
@@ -646,6 +655,8 @@ export interface ComboResult {
   incomers: number;
   /** Total bus couplers: one between neighbouring incomers within each set, none between sets. */
   couplers: number;
+  /** Secondary voltage level (V) of the transformers, e.g. 433. */
+  voltageV: number;
   /** True when this number of transformers was added because the selected number(s) could not be balanced. */
   added: boolean;
   /** One entry per rating considered, ascending, each tried with the real loads. */
@@ -764,7 +775,7 @@ function mccFeedersFor(layout: number[], selectedVoltageV: number, opts: SizingO
           const load: SizedLoad = { ...r.load, source: "mcc" };
           if (k >= inCalc[side]) {
             Object.assign(load, {
-              description: `${load.description} (not counted)`, kw: 0, kvar: 0, kva: 0,
+              description: `${load.description} (not counted)`, kw: 0, kvar: 0, kva: 0, current: 0,
               basis: `Installed but not counted: ${counted} of ${f.count} × ${f.amps} A are in the calculation`,
             });
           }
@@ -845,6 +856,7 @@ function buildCombo(
   }
   return {
     count,
+    voltageV: selectedVoltageV,
     layout: chosen.layout,
     incomers: count,
     couplers: count - chosen.layout.length,

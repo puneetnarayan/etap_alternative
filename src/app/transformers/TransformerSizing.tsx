@@ -309,7 +309,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
               <thead><tr>
                 <th style={th}>Row</th><th style={th}>Description</th><th style={th}>W/S</th><th style={th}>Group</th>
                 <th style={th}>Treated as</th><th style={th}>Rated kW</th><th style={th}>kW (input)</th><th style={th}>kvar</th>
-                <th style={th}>Power factor</th><th style={th}>kVA</th><th style={th}>Basis</th>
+                <th style={th}>Power factor</th><th style={th}>kVA</th><th style={th}>Current (A)</th><th style={th}>Basis</th>
               </tr></thead>
               <tbody>
                 {result.loads.map((l) => {
@@ -321,14 +321,14 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
                       <td style={kindCell(treated)}>{treated}</td>
                       <td style={td}>{l.ratedKw === undefined ? "" : fmtInt(l.ratedKw)}</td>
                       <td style={td}>{fmtInt(l.kw)}</td><td style={td}>{fmtInt(l.kvar)}</td><td style={td}>{fmtPf(l.powerFactor)}</td>
-                      <td style={td}>{fmtInt(l.kva)}</td><td style={{ ...td, ...left }}>{l.basis}</td>
+                      <td style={td}>{fmtInt(l.kva)}</td><td style={td}>{fmtInt(l.current)}</td><td style={{ ...td, ...left }}>{l.basis}</td>
                     </tr>
                   );
                 })}
                 <tr>
                   <td style={td} /><td style={{ ...td, ...left }}><b>Total</b></td><td style={td} /><td style={td} /><td style={td} /><td style={td} />
                   <td style={td}><b>{fmtInt(t.kw)}</b></td><td style={td}><b>{fmtInt(t.kvar)}</b></td><td style={td}><b>{fmtPf(t.powerFactor)}</b></td>
-                  <td style={td}><b>{fmtInt(result.totalKva)}</b></td><td style={td} />
+                  <td style={td}><b>{fmtInt(result.totalKva)}</b></td><td style={td} /><td style={td} />
                 </tr>
               </tbody>
             </table>
