@@ -174,7 +174,7 @@ function loadCells(l: SizingResult["loads"][number], includePower: boolean, sect
 function spareCells(sp: SpareFeeder, includePower: boolean, lead: Row): Row {
   return tint([
     ...lead,
-    cell(""), cell(sp.description), cell(""), cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
+    cell(""), cell(sp.description), cell("SP", "center"), cell(""), cell(sp.kind === "feeder" ? "Feeder" : `${sp.type} motor`),
     sp.unit === "kW" ? n(sp.rating) : cell(""),
     ...(includePower ? [cell(""), cell(""), cell("")] : []),
     cell(""), cell("Spare: not included in the calculation"),
@@ -418,7 +418,7 @@ function comboSheet(c: ComboResult, o: ReportOptions, spares: SpareFeeder[]): Re
       { value: "DOL", align: "center", backgroundColor: REPORT_COLORS.dol, ...BORDER },
       { value: "VFD", align: "center", backgroundColor: REPORT_COLORS.vfd, ...BORDER },
       { value: "Feeder", align: "center", backgroundColor: REPORT_COLORS.feeder, ...BORDER },
-      { value: "Spare feeder", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.spare, ...BORDER },
+      { value: "SP (Spare)", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.spare, ...BORDER },
     ],
     [],
     ...c.sets.flatMap((set): Row[] => [

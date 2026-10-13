@@ -694,7 +694,7 @@ export function spareFeeders(loads: SizedLoad[]): SpareFeeder[] {
     const rating = (unit === "kW" ? l.ratedKw : l.amps) as number;
     found.set(key, {
       key, type: l.type, kind: l.kind, unit, rating, count: 1,
-      description: l.kind === "feeder" ? `Spare feeder, ${rating} ${unit}` : `Spare ${l.type} motor feeder, ${rating} ${unit}`,
+      description: l.kind === "feeder" ? `Spare feeder, ${rating} ${unit} (Spare)` : `Spare ${l.type} motor feeder, ${rating} ${unit} (Spare)`,
     });
   }
   const order: Record<LoadType, number> = { DOL: 0, VFD: 1, FEEDER: 2 };

@@ -658,7 +658,9 @@ describe("Excel report: spare feeders (one of each type and rating, highlighted,
       expect(r.every((c) => bg(c) === GOLD), `row ${i}`).toBe(true); // gold end to end
       expect(val(r[header.indexOf("Description")])).toBe(result.spares[i].description);
       expect(val(r[header.indexOf("Basis")])).toBe("Spare: not included in the calculation");
-      for (const col of ["Row", "W/S", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
+      for (const col of ["Row", "Duty/standby group", "kW (input)", "kvar", "Power factor", "kVA"]) expect(val(r[header.indexOf(col)]), col).toBe("");
+      expect(val(r[header.indexOf("W/S")])).toBe("SP");
+      expect(String(val(r[header.indexOf("Description")]))).toMatch(/ \(Spare\)$/);
       const sp = result.spares[i];
       expect(val(r[header.indexOf("Rated kW (motor)")])).toBe(sp.unit === "kW" ? sp.rating : "");
     });

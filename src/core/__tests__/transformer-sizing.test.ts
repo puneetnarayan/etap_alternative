@@ -627,8 +627,8 @@ describe("spare feeders: one of each type and rating, output only", () => {
       "DOL 90 kW x1", "DOL 185 kW x2", "DOL 180 A x1", "VFD 75 kW x2", "VFD 120 A x1", "FEEDER 250 A x2", "FEEDER 800 A x1",
     ]);
     expect(spares.map((x) => x.description)).toEqual([
-      "Spare DOL motor feeder, 90 kW", "Spare DOL motor feeder, 185 kW", "Spare DOL motor feeder, 180 A",
-      "Spare VFD motor feeder, 75 kW", "Spare VFD motor feeder, 120 A", "Spare feeder, 250 A", "Spare feeder, 800 A",
+      "Spare DOL motor feeder, 90 kW (Spare)", "Spare DOL motor feeder, 185 kW (Spare)", "Spare DOL motor feeder, 180 A (Spare)",
+      "Spare VFD motor feeder, 75 kW (Spare)", "Spare VFD motor feeder, 120 A (Spare)", "Spare feeder, 250 A (Spare)", "Spare feeder, 800 A (Spare)",
     ]);
     expect(new Set(spares.map((x) => x.key)).size).toBe(spares.length);
     // the key is the same one the loads carry
@@ -636,7 +636,7 @@ describe("spare feeders: one of each type and rating, output only", () => {
   });
 
   it("a feeder with a kW rating is a DOL motor, so it gets a DOL spare, not a feeder spare", () => {
-    expect(spareFeeders(loadsOf([{ type: "Feeder", kw: 50 }])).map((x) => x.description)).toEqual(["Spare DOL motor feeder, 50 kW"]);
+    expect(spareFeeders(loadsOf([{ type: "Feeder", kw: 50 }])).map((x) => x.description)).toEqual(["Spare DOL motor feeder, 50 kW (Spare)"]);
   });
 
   it("the sample file gives 12 spares (5 DOL kW, 1 DOL amps, 3 VFD kW, 1 VFD amps, 2 feeders)", () => {
