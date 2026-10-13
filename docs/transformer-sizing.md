@@ -61,7 +61,7 @@ Formatting:
 - **No author metadata:** the generated file contains no document properties at all (no creator / last-modified-by). The sample file served for download has them removed too.
 
 ## Interpretations to confirm
-- PMCC / IMCC feeders: "each PMCC or IMCC" is read as each set of transformers (one board per set); the feeders are taken as three-phase (√3 × V × A); odd counts would put the extra feeder on the first side.
+- PMCC / IMCC feeders: one board per set of transformers and three-phase feeders (√3 × V × A) are confirmed. Odd counts, if the block is ever changed, would put the extra feeder on the first side.
 - "With one transformer out, 90 %" is applied as a 90 % limit in the one-out case (confirmed).
 - Duty/standby pairs are identified by the optional group column (confirmed).
 - "Number of transformers can be a combination of 2 or 3 only, one bus coupler between the incomers" is read as independent sets of 2 or 3 with couplers only inside a set.
