@@ -679,7 +679,8 @@ describe("spare feeders: one of each type and rating, output only", () => {
 describe("PMCC / IMCC feeders in every set", () => {
   const mk = (rows: Partial<RawLoadRow>[]) => rows.map((r, i) => row({ rowNumber: i + 2, description: `L${i}`, ...r }));
   const MCC = { ...DEFAULT_OPTIONS, ratingsKva: [2000], mccFeeders: STANDARD_MCC_FEEDERS };
-  const perBoardKva = (SQ3 * 420 * (6 * 63 + 6 * 32 + 6 * 16 + 10 * 6)) / 1000; // 726 A = 528.1 kVA
+  // 28 installed per board, of which 4 x 63 + 4 x 32 + 4 x 16 + 6 x 6 = 480 A are counted = 349.2 kVA
+  const perBoardKva = (SQ3 * 420 * (4 * 63 + 4 * 32 + 4 * 16 + 6 * 6)) / 1000;
   const bigRows = () => mk([{ type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "VFD", kw: 250 }]);
 
   it("is off unless asked for", () => {
@@ -688,14 +689,15 @@ describe("PMCC / IMCC feeders in every set", () => {
     expect(r.combos[0].mccLoads).toEqual([]);
   });
 
-  it("adds 28 feeders per set, counted in the combination's total (726 A = 528.1 kVA per board)", () => {
+  it("adds 28 feeders per set, counted in the combination's total (480 A = 349.2 kVA counted per board)", () => {
     const r = sizeTransformers(bigRows(), 433, MCC);
     const c = r.combos[0];
     expect(c.layout).toEqual([3]);
     expect(c.mccLoads).toHaveLength(28);
     expect(c.mccLoads.every((l) => l.source === "mcc" && l.rowNumber === 0 && l.kind === "feeder")).toBe(true);
     expect(c.mccLoads.reduce((a, l) => a + l.kva, 0)).toBeCloseTo(perBoardKva, 6);
-    expect(perBoardKva).toBeCloseTo(528.1, 1);
+    expect(perBoardKva).toBeCloseTo(349.2, 1);
+    expect(c.mccLoads.filter((l) => l.kva === 0)).toHaveLength(28 - 18); // 10 installed but not counted
     expect(c.totalKva).toBeCloseTo(r.totalKva + perBoardKva, 6);
     expect(c.sets[0].kva).toBeCloseTo(c.totalKva, 6);
     expect(r.totalKva).toBeCloseTo(r.loads.reduce((a, l) => a + l.kva, 0), 6); // the list total excludes them

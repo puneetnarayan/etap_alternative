@@ -213,7 +213,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Spare feeders added (not in the calculation)", cell(r.spares.length)),
     kv(op.mccFeeders.length > 0 ? "Total kVA of the load list (before PMCC/IMCC feeders)" : "Total kVA used for sizing", n(r.totalKva)),
     ...(op.mccFeeders.length > 0
-      ? [kv("PMCC/IMCC feeders added to every set (in the calculation)", cell(op.mccFeeders.map((f) => `${f.count} × ${f.amps} A`).join(", "))),
+      ? [kv("PMCC/IMCC feeders added to every set (in the calculation)", cell(op.mccFeeders.map((f) => `${f.count} × ${f.amps} A (${f.counted ?? f.count} counted)`).join(", "))),
          kv("Their placement", cell("Half of each kind on each side of the middle transformer (set of 3) or of the bus coupler (set of 2)"))]
       : []),
     ...(o.includePower
@@ -373,7 +373,7 @@ function comboSheet(c: ComboResult, o: ReportOptions, spares: SpareFeeder[]): Re
     ...(c.added ? [noteBanner("Added because the loads could not be balanced within the limits with fewer transformers.")] : []),
     [layoutLine],
     ...(c.mccLoads.length > 0
-      ? [[`Total load ${fmtInt(c.totalKva)} kVA = load list ${fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + ${c.mccLoads.length} PMCC/IMCC feeders ${fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA`] as Row]
+      ? [[`Total load ${fmtInt(c.totalKva)} kVA = load list ${fmtInt(c.totalKva - c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA + PMCC/IMCC feeders (${c.mccLoads.filter((l) => l.kva > 0).length} of ${c.mccLoads.length} counted) ${fmtInt(c.mccLoads.reduce((a, l) => a + l.kva, 0))} kVA`] as Row]
       : []),
     [],
     [label("Ratings considered")],
