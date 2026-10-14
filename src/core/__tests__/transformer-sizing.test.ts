@@ -26,7 +26,7 @@ describe("sizeLoad (hand-calculated)", () => {
   it("amps-only feeder: sqrt(3) * V * I", () => {
     const l = loadOf({ type: "Feeder", amps: 400 });
     expect(l.kind).toBe("feeder");
-    expect(l.kva).toBeCloseTo((SQ3 * 420 * 400) / 1000, 6); // 299.996
+    expect(l.kva).toBeCloseTo((SQ3 * 433 * 400) / 1000, 6); // 299.996
     expect(l.kw).toBeCloseTo(l.kva * 0.7, 6);
   });
   it("amps-only with no type is a feeder; with DOL/VFD is a motor", () => {
@@ -40,10 +40,10 @@ describe("sizeLoad (hand-calculated)", () => {
     expect(l.kva).toBeCloseTo(50 / 0.665, 6);
     expect(l.warnings.length).toBe(1);
   });
-  it("amps-only loads at the 433 V level are converted at 420 V (sqrt(3) x 420 x A); the load stays a 433 V load", () => {
+  it("amps-only loads at the 433 V level are converted at 433 V (sqrt(3) x 433 x A)", () => {
     const l = loadOf({ type: "Feeder", amps: 400 });
-    expect(l.kva).toBeCloseTo((SQ3 * 420 * 400) / 1000, 6); // 290.99 kVA, not 299.996 at 433 V
-    expect(l.basis).toContain("√3 × 420 V × 400 A");
+    expect(l.kva).toBeCloseTo((SQ3 * 433 * 400) / 1000, 6); // 300.0 kVA
+    expect(l.basis).toContain("√3 × 433 V × 400 A");
     expect(l.voltageV).toBe(433);
     expect(l.kw / l.kva).toBeCloseTo(0.7, 9);
     // motors given in kW do not depend on the voltage
@@ -55,7 +55,7 @@ describe("sizeLoad (hand-calculated)", () => {
       if (!("load" in r)) throw new Error(r.issue.message);
       return r.load.kva;
     };
-    expect(DEFAULT_OPTIONS.calculationVoltageV).toEqual({ 433: 420 });
+    expect(DEFAULT_OPTIONS.calculationVoltageV).toEqual({}); // 433 V loads are calculated at 433 V
     expect(at({}, 1000)).toBeCloseTo((SQ3 * 433 * 1000) / 1000, 6); // no mapping: 433 V as labelled
     expect(at({ 433: 415 }, 1000)).toBeCloseTo((SQ3 * 415 * 1000) / 1000, 6);
     expect(at({ 433: 420 }, 1000, 690)).toBeCloseTo((SQ3 * 690 * 1000) / 1000, 6); // 690 V is not remapped
@@ -171,9 +171,9 @@ describe("kW / kvar / totals", () => {
 });
 
 describe("combos and one-out check", () => {
-  const rows = [row({ rowNumber: 2, type: "DOL", kw: 1000 }), row({ rowNumber: 3, type: "Feeder", amps: 1000 })];
-  // kVA = 1000/0.665 + sqrt(3)*420*1000/1000 = 1503.76 + 727.46 = 2231.2 (amps are converted at 420 V)
-  const exp = 1000 / 0.665 + (SQ3 * 420 * 1000) / 1000;
+  const rows = [row({ rowNumber: 2, type: "DOL", kw: 1000 }), row({ rowNumber: 3, type: "Feeder", amps: 950 })];
+  // kVA = 1000/0.665 + sqrt(3)*433*950/1000 = 1503.76 + 712.46 = 2216.2 (amps are converted at 433 V)
+  const exp = 1000 / 0.665 + (SQ3 * 433 * 950) / 1000;
   it("gives a result per transformer count, honouring the counts option", () => {
     expect(sizeTransformers(rows, 433).combos.map((c) => c.count)).toEqual([3]); // default: start with 3
     const both = sizeTransformers(rows, 433, BOTH);
@@ -186,10 +186,10 @@ describe("combos and one-out check", () => {
   });
   it("each combination picks the smallest fitting rating (2 x 2000 carries 1800 kVA, 2 x 2500 carries 2250 kVA)", () => {
     const r = sizeTransformers(rows, 433, BOTH);
-    expect(r.totalKva).toBeCloseTo(exp, 6); // 2,231.2 kVA
+    expect(r.totalKva).toBeCloseTo(exp, 6); // 2,216.2 kVA
     const two = r.combos.find((c) => c.count === 2)!;
     expect(two.fits).toBe(true);
-    expect(two.chosen.ratingKva).toBe(2500); // 2,231.2 <= 2,250 (2 x 2000 would carry only 1,800)
+    expect(two.chosen.ratingKva).toBe(2500); // 2,216.2 <= 2,250 (2 x 2000 would carry only 1,800)
     expect(two.candidates.map((c) => [c.ratingKva, c.fits])).toEqual([[2000, false], [2500, true], [4000, true]]);
     expect(two.couplers).toBe(1);
   });
@@ -303,7 +303,7 @@ describe("sample workbook end to end", () => {
     const dolKw = 185 + 185 + 160 + 160 + 132 + 90 + 315;
     const vfdKw = 250 + 200 + 75;
     const expected =
-      dolKw / (0.7 * 0.95) + vfdKw / (0.9 * 0.95) + (SQ3 * 420 * (180 + 120 + 250 + 800)) / 1000;
+      dolKw / (0.7 * 0.95) + vfdKw / (0.9 * 0.95) + (SQ3 * 433 * (180 + 120 + 250 + 800)) / 1000;
 
     const r = sizeTransformers(parsed.rows, 433, BOTH);
     expect(r.loads).toHaveLength(14);
@@ -347,7 +347,7 @@ describe("more transformers = independent sets of 2 or 3", () => {
   //   8 (3+3+2): 9000 | 9 (3+3+3): 10800 | 10 (3+3+2+2): 10800 | 11: 12600 | 12: 14400 | 20 (6x3 + 2): 23400
   const loadsKva = (kva: number, parts = 60): RawLoadRow[] =>
     Array.from({ length: parts }, (_, i) =>
-      row({ rowNumber: i + 2, description: `F${i}`, type: "Feeder", amps: (kva / parts * 1000) / (SQ3 * 420) }));
+      row({ rowNumber: i + 2, description: `F${i}`, type: "Feeder", amps: (kva / parts * 1000) / (SQ3 * 433) }));
   const only2000 = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
   const cap = (n: number) => evaluateCandidate(0, n, 2000).maxLoadKva;
 
@@ -438,7 +438,7 @@ describe("more transformers = independent sets of 2 or 3", () => {
   });
   it("8 indivisible feeders of 750 kVA on 6 transformers (3 + 3): 4 per set, no overload, no notes", () => {
     const rows: RawLoadRow[] = Array.from({ length: 8 }, (_, i) =>
-      row({ rowNumber: i + 2, description: `F${i}`, type: "Feeder", amps: 750 * 1000 / (SQ3 * 420) }));
+      row({ rowNumber: i + 2, description: `F${i}`, type: "Feeder", amps: 750 * 1000 / (SQ3 * 433) }));
     const r = sizeTransformers(rows, 433, { ...only2000, counts: [6] });
     const c = r.combos[0];
     expect(c.layout).toEqual([3, 3]);
@@ -495,7 +495,7 @@ describe("more transformers = independent sets of 2 or 3", () => {
 describe("real load balancing decides whether a number of transformers fits", () => {
   // For 2000 kVA units: a section carries at most 0.8 * 2000 = 1600 kVA, a set of 3 carries 3600 kVA, a set of 2 carries 1800 kVA.
   const kvaRows = (kvas: number[], extra: Partial<RawLoadRow>[] = []): RawLoadRow[] =>
-    kvas.map((kva, i) => row({ rowNumber: i + 2, description: `L${i}`, type: "Feeder", amps: (kva * 1000) / (SQ3 * 420), ...(extra[i] ?? {}) }));
+    kvas.map((kva, i) => row({ rowNumber: i + 2, description: `L${i}`, type: "Feeder", amps: (kva * 1000) / (SQ3 * 433), ...(extra[i] ?? {}) }));
   const only2000 = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
 
   it("5 loads of 1000 kVA: 5 transformers (3+2) would carry 5400 kVA ideally but the loads cannot be placed, so 6 is used", () => {
@@ -655,7 +655,7 @@ describe("spare feeders: one of each type and rating, output only", () => {
     const rows = mk([{ type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "VFD", kw: 250 }, { type: "Feeder", amps: 800 }, { type: "Feeder", amps: 250 }]);
     const r = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
     expect(r.spares.length).toBeGreaterThan(0);
-    const expected = 185 / 0.665 * 2 + 250 / 0.855 + (SQ3 * 420 * (800 + 250)) / 1000; // loads only
+    const expected = 185 / 0.665 * 2 + 250 / 0.855 + (SQ3 * 433 * (800 + 250)) / 1000; // loads only
     expect(r.totalKva).toBeCloseTo(expected, 6);
     expect(r.loads).toHaveLength(5); // the spares are not loads
     for (const c of r.combos) {
@@ -679,8 +679,8 @@ describe("spare feeders: one of each type and rating, output only", () => {
 describe("PMCC / IMCC feeders in every set", () => {
   const mk = (rows: Partial<RawLoadRow>[]) => rows.map((r, i) => row({ rowNumber: i + 2, description: `L${i}`, ...r }));
   const MCC = { ...DEFAULT_OPTIONS, ratingsKva: [2000], mccFeeders: STANDARD_MCC_FEEDERS };
-  // 28 installed per board, of which 4 x 63 + 4 x 32 + 4 x 16 + 6 x 6 = 480 A are counted = 349.2 kVA
-  const perBoardKva = (SQ3 * 420 * (4 * 63 + 4 * 32 + 4 * 16 + 6 * 6)) / 1000;
+  // 28 installed per board, of which 4 x 63 + 4 x 32 + 4 x 16 + 6 x 6 = 480 A are counted = 360.0 kVA
+  const perBoardKva = (SQ3 * 433 * (4 * 63 + 4 * 32 + 4 * 16 + 6 * 6)) / 1000;
   const bigRows = () => mk([{ type: "DOL", kw: 185 }, { type: "DOL", kw: 185 }, { type: "VFD", kw: 250 }]);
 
   it("is off unless asked for", () => {
@@ -689,14 +689,14 @@ describe("PMCC / IMCC feeders in every set", () => {
     expect(r.combos[0].mccLoads).toEqual([]);
   });
 
-  it("adds 28 feeders per set, counted in the combination's total (480 A = 349.2 kVA counted per board)", () => {
+  it("adds 28 feeders per set, counted in the combination's total (480 A = 360.0 kVA counted per board)", () => {
     const r = sizeTransformers(bigRows(), 433, MCC);
     const c = r.combos[0];
     expect(c.layout).toEqual([3]);
     expect(c.mccLoads).toHaveLength(28);
     expect(c.mccLoads.every((l) => l.source === "mcc" && l.rowNumber === 0 && l.kind === "feeder")).toBe(true);
     expect(c.mccLoads.reduce((a, l) => a + l.kva, 0)).toBeCloseTo(perBoardKva, 6);
-    expect(perBoardKva).toBeCloseTo(349.2, 1);
+    expect(perBoardKva).toBeCloseTo(360.0, 1);
     expect(c.mccLoads.filter((l) => l.kva === 0)).toHaveLength(28 - 18); // 10 installed but not counted
     expect(c.totalKva).toBeCloseTo(r.totalKva + perBoardKva, 6);
     expect(c.sets[0].kva).toBeCloseTo(c.totalKva, 6);
@@ -723,7 +723,7 @@ describe("PMCC / IMCC feeders in every set", () => {
     const c = sizeTransformers(rows, 433, { ...MCC, maxTransformers: 5, counts: [5] }).combos.find((x) => x.count === 5)!;
     expect(c.layout).toEqual([3, 2]);
     expect(c.mccLoads).toHaveLength(56);
-    expect(c.totalKva).toBeCloseTo(12 * ((SQ3 * 420 * 1500) / 1000) + 2 * perBoardKva, 6);
+    expect(c.totalKva).toBeCloseTo(12 * ((SQ3 * 433 * 1500) / 1000) + 2 * perBoardKva, 6);
     for (const set of c.sets) {
       expect(set.sections.flatMap((s) => s.loads).filter((l) => l.source === "mcc")).toHaveLength(28);
     }
@@ -732,7 +732,7 @@ describe("PMCC / IMCC feeders in every set", () => {
   it("can tip a list that just fits into needing more transformers", () => {
     // 3 x 2000 kVA carry at most 4,800 kVA (3 x 1600 normal, 2 x 1800 one out = 3,600 -> limit 3,600)
     const cap = setCapacityKva(3, 2000);
-    const rows = mk([{ type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 420) / 3) }]);
+    const rows = mk([{ type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 433) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 433) / 3) }, { type: "Feeder", amps: Math.floor(((cap - 100) * 1000) / (SQ3 * 433) / 3) }]);
     const without = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] });
     const withMcc = sizeTransformers(rows, 433, MCC);
     expect(without.combos[0].fits).toBe(true);
@@ -741,9 +741,9 @@ describe("PMCC / IMCC feeders in every set", () => {
 });
 
 describe("current of each load (kVA ÷ (√3 × V))", () => {
-  it("hand-calculated: 185 kW DOL = 382.4 A, 250 kW VFD = 401.9 A at 420 V; 450 kW DOL = 566.2 A at 690 V", () => {
-    expect(loadOf({ type: "DOL", kw: 185 }).current).toBeCloseTo(382.4, 1); // 185 / (0.7 x 0.95) = 278.2 kVA
-    expect(loadOf({ type: "VFD", kw: 250 }).current).toBeCloseTo(401.9, 1); // 250 / (0.9 x 0.95) = 292.4 kVA
+  it("hand-calculated: 185 kW DOL = 370.9 A, 250 kW VFD = 389.9 A at 433 V; 450 kW DOL = 566.2 A at 690 V", () => {
+    expect(loadOf({ type: "DOL", kw: 185 }).current).toBeCloseTo(370.9, 1); // 185 / (0.7 x 0.95) = 278.2 kVA
+    expect(loadOf({ type: "VFD", kw: 250 }).current).toBeCloseTo(389.9, 1); // 250 / (0.9 x 0.95) = 292.4 kVA
     expect(loadOf({ type: "DOL", kw: 450, voltageV: 690 }, 690).current).toBeCloseTo(566.2, 1);
   });
 

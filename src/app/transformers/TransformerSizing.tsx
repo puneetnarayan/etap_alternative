@@ -80,7 +80,7 @@ export default function TransformerSizing() {
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [choice, setChoice] = useState<VoltageChoice>("433");
-  const [calcV433, setCalcV433] = useState("420");
+  const [calcV433, setCalcV433] = useState("433");
   const [combination, setCombination] = useState<Combination>("3");
   const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
@@ -106,7 +106,7 @@ export default function TransformerSizing() {
     ratingsKva: [rating],
     counts: [Number(combination)],
     mccFeeders: withMcc ? STANDARD_MCC_FEEDERS : [],
-    calculationVoltageV: { ...DEFAULT_OPTIONS.calculationVoltageV, 433: num(calcV433, 420, 0, 1000) },
+    calculationVoltageV: { ...DEFAULT_OPTIONS.calculationVoltageV, 433: num(calcV433, 433, 0, 1000) },
   }), [eff, pfDol, pfVfd, pfFeeder, rating, combination, withMcc, calcV433]);
 
   // One run per selected voltage level. When the chosen rating cannot carry a level's load even with the

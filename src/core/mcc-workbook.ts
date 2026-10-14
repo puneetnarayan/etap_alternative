@@ -70,7 +70,7 @@ const COLS: Col[] = [
   { key: "volt", header: "Voltage read (V)", kind: "input", width: 10, format: "#,##0" },
   { key: "kw", header: "kW read", kind: "input", width: 9, format: "#,##0" },
   { key: "rated", header: "Estimated / entered load current (A)", kind: "input", width: 14, format: "#,##0", comment: "Amps rating from the load list. If present and valid it is used in preference to a current calculated from kW." },
-  { key: "calcV", header: "Calculation voltage (V)", kind: "calc", width: 12, format: "#,##0", comment: "Line voltage used in the formula. The 433 V level is calculated at the value on the Notes sheet (420 V)." },
+  { key: "calcV", header: "Calculation voltage (V)", kind: "calc", width: 12, format: "#,##0", comment: "Line voltage used in the formula. The 433 V level is calculated at the value on the Notes sheet (433 V by default)." },
   { key: "pf", header: "Power factor used", kind: "calc", width: 9, format: "0.00", comment: "General feeder 0.7, DOL 0.7, VFD 0.9 (Notes sheet)." },
   { key: "eff", header: "Motor efficiency used (provisional)", kind: "calc", width: 12, format: "0%", comment: "Applied to DOL motors given in kW only (kW taken as motor output). Provisional default 93% (Notes sheet). Overwrite with the real value. Blank for other loads." },
   { key: "calcI", header: "Calculated Current (A) – specified PF", kind: "calc", width: 14, format: "#,##0", comment: "I = kW x 1000 / (sqrt(3) x V x PF), divided also by efficiency for DOL motors. Blank when kW, voltage or (DOL) efficiency is missing." },

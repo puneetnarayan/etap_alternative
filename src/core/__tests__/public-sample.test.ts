@@ -23,7 +23,7 @@ const SQ3 = Math.sqrt(3);
 const DOL_KW = 185 + 185 + 160 + 160 + 132 + 90 + 315;
 const VFD_KW = 250 * 3 + 200 * 3 + 75 + 250 * 8 + 110;
 const AMPS = 180 + 120 + 250 + 800;
-const TOTAL_433 = DOL_KW / (0.7 * 0.95) + VFD_KW / (0.9 * 0.95) + (SQ3 * 420 * AMPS) / 1000;
+const TOTAL_433 = DOL_KW / (0.7 * 0.95) + VFD_KW / (0.9 * 0.95) + (SQ3 * 433 * AMPS) / 1000;
 const TOTAL_690 = 450 / (0.7 * 0.95) + 355 / (0.9 * 0.95);
 
 const load = async () => parseLoadSheet(await readSheet(buf));
@@ -111,14 +111,14 @@ describe("the downloadable sample file", () => {
     expect(r.recommended).toMatchObject({ count: 3, ratingKva: 4000 });
   });
 
-  it("amps-only loads are converted at 420 V (433 V loads), 690 V loads at 690 V", async () => {
+  it("amps-only loads are converted at their own voltage (433 V loads at 433 V, 690 V loads at 690 V)", async () => {
     const r = sizeTransformers((await load()).rows, 433);
     const dosing = r.loads.find((l) => l.description.startsWith("Dosing pump"))!;
-    expect(dosing.kva).toBeCloseTo((SQ3 * 420 * 180) / 1000, 6); // 130.9 kVA (not 135.0 at 433 V)
-    expect(dosing.basis).toContain("√3 × 420 V × 180 A");
+    expect(dosing.kva).toBeCloseTo((SQ3 * 433 * 180) / 1000, 6); // 135.0 kVA
+    expect(dosing.basis).toContain("√3 × 433 V × 180 A");
     expect(dosing.voltageV).toBe(433); // still a 433 V load
     const feeder = r.loads.find((l) => l.description.startsWith("MCC-2"))!;
-    expect(feeder.kva).toBeCloseTo((SQ3 * 420 * 800) / 1000, 6); // 582.0 kVA
+    expect(feeder.kva).toBeCloseTo((SQ3 * 433 * 800) / 1000, 6); // 600.0 kVA
     // motors given in kW do not depend on the voltage
     const crusher = r.loads.find((l) => l.description === "Crusher")!;
     expect(crusher.kva).toBeCloseTo(315 / (0.7 * 0.95), 6);
