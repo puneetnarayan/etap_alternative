@@ -3,7 +3,7 @@
 Sidebar entry **BOM** (route `/bom`). It builds one unit BOM for each unique item (type + rating) of the load list.
 
 ## Flow
-1. The load list is the one last used in the browser tab (Transformer sizing, MCC Load List or this page), or dropped on this page. Dropping a file builds and downloads the workbook at once.
+1. The load list is the one app-wide list added at the top of the sidebar (kept for the browser tab). Use the download button on this page to create the workbook.
 2. Each load goes through the preliminary breaker selection of the MCC Load List tab (so its editable assumptions, including "630 A as MCCB", apply).
 3. Loads with the same **type + breaker rating (+ motor kW for motors)** are one item, counted.
 4. Each item is matched to a unit-BOM sheet of the template `public/bom/unit_bom_template.xlsx` and cloned into the output with its layout, fonts, column widths and colours unchanged; only rating text is set (breaker rating, CT primary with a 1 A secondary, ELR rating, sheet title).
