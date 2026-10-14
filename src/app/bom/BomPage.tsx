@@ -23,8 +23,19 @@ export default function BomPage() {
   async function download(list: StoredLoadList, its: BomItem[]) {
     setStatus({ kind: "busy" });
     try {
-      const res = await fetch("/bom/unit_bom_template.xlsx");
-      if (!res.ok) throw new Error(`could not load the unit-BOM template (${res.status})`);
+      // The template is a static file of the site. One retry (cache-busted) covers a dropped connection.
+      const tplUrl = `${window.location.origin}/bom/unit_bom_template.xlsx`;
+      let res: Response;
+      try {
+        res = await fetch(tplUrl);
+      } catch {
+        try {
+          res = await fetch(`${tplUrl}?retry=${Date.now()}`, { cache: "no-store" });
+        } catch {
+          throw new Error(`the unit-BOM template could not be fetched from ${tplUrl} (network error or blocked by the browser or an extension). Reload the page and try again.`);
+        }
+      }
+      if (!res.ok) throw new Error(`could not load the unit-BOM template (${res.status}) from ${tplUrl}`);
       const { buildBomWorkbook } = await import("@/core/bom-workbook");
       const out = await buildBomWorkbook(await res.arrayBuffer(), its, list.fileName);
       const name = `BOM_${stamp()}.xlsx`;
