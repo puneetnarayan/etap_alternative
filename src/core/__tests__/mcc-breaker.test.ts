@@ -8,58 +8,65 @@ import {
 } from "..";
 import { mccWorkbookBuffer } from "../mcc-workbook";
 
-const label = (d: number | undefined, o = {}) => breakerLabel(selectBreaker(d, o));
+const label = (d: number | undefined, o: Parameters<typeof selectBreaker>[1] = {}) => breakerLabel(selectBreaker(d, o));
 
 describe("breaker selection", () => {
-  it("20 A -> 32 A MCCB; 50 A -> 63 A MCCB; 120 A -> 160 A MCCB; 300 A -> 400 A MCCB", () => {
-    expect(label(20)).toBe("32 A MCCB");
-    expect(label(50)).toBe("63 A MCCB");
-    expect(label(120)).toBe("160 A MCCB");
+  it("MCCB: next rating in the BOM list 6, 10, 16, 25, 32, 50, 63, 100, 125, 160, 200, 250, 400 A", () => {
+    expect(label(20)).toBe("25 A MCCB");
+    expect(label(50)).toBe("50 A MCCB");
+    expect(label(120)).toBe("125 A MCCB");
     expect(label(300)).toBe("400 A MCCB");
-    expect(label(32)).toBe("32 A MCCB");
+    expect(label(5)).toBe("6 A MCCB");
+    expect(label(32)).toBe("32 A MCCB"); // 32 and 63 A are kept
+    expect(label(60)).toBe("63 A MCCB");
     expect(label(400)).toBe("400 A MCCB");
   });
 
-  it("450 A -> engineering review, not an undersized 400 A MCCB", () => {
+  it("450 A -> engineering review, not an undersized 400 A MCCB (unless 630 A is taken as an MCCB)", () => {
     const s = selectBreaker(450);
     expect(s).toMatchObject({ kind: "REVIEW", status: "review" });
     expect(s.ratingA).toBeUndefined();
     expect(s.message).toMatch(/engineering review/i);
     expect(selectBreaker(400.5).kind).toBe("REVIEW");
     expect(selectBreaker(499.9).kind).toBe("REVIEW");
+    expect(label(450, { mccb630: true })).toBe("630 A MCCB");
+    expect(label(630, { mccb630: true })).toBe("630 A MCCB");
+    expect(label(631, { mccb630: true })).toBe("1000 A EDO ACB");
   });
 
-  it("500 A and 620 A -> 630 A EDO ACB; a 630 A MCCB is never selected", () => {
+  it("500 A and 620 A -> 630 A EDO ACB (the default for a 630 A feeder)", () => {
     expect(label(500)).toBe("630 A EDO ACB");
     expect(label(620)).toBe("630 A EDO ACB");
     expect(label(630)).toBe("630 A EDO ACB");
     for (let d = 1; d <= 1300; d += 7) {
       const s = selectBreaker(d);
-      expect(s.kind === "MCCB" && s.ratingA === 630).toBe(false);
-      if (s.kind === "MCCB") expect([32, 63, 100, 160, 250, 400]).toContain(s.ratingA);
+      if (s.kind === "MCCB") expect([6, 10, 16, 25, 32, 50, 63, 100, 125, 160, 200, 250, 400]).toContain(s.ratingA);
     }
   });
 
-  it("an existing 800 A ACB incomer -> 1000 A EDO ACB; other 800 A values are not converted", () => {
+  it("an existing 800 A ACB incomer -> 1000 A EDO ACB; 630 to 800 A is built as 1000 A", () => {
     expect(label(1000, { existing800AcbIncomer: true })).toBe("1000 A EDO ACB");
     expect(selectBreaker(undefined, { existing800AcbIncomer: true }).ratingA).toBe(1000);
-    expect(label(700)).toBe("800 A EDO ACB"); // a new requirement of 700 A is not an existing 800 A incomer
+    expect(selectBreaker(700)).toMatchObject({ kind: "EDO ACB", ratingA: 1000, status: "verify" });
+    expect(selectBreaker(800).ratingA).toBe(1000);
   });
 
-  it("above 630 A -> next standard ACB, flagged for verification; above 1250 A -> review", () => {
-    for (const [d, r] of [[631, 800], [800, 800], [801, 1000], [1000, 1000], [1001, 1250], [1250, 1250]] as const) {
-      expect(selectBreaker(d)).toMatchObject({ kind: "EDO ACB", ratingA: r, status: "verify" });
+  it("above 630 A -> next standard ACB (1000, 1250, 1600, 2000, 2500, 3200, 4000), flagged for verification; above 4000 A -> review", () => {
+    for (const [d, r] of [[631, 1000], [1000, 1000], [1001, 1250], [1250, 1250], [1251, 1600], [1700, 2000], [2001, 2500], [2600, 3200], [3300, 4000], [4000, 4000]] as const) {
+      expect(selectBreaker(d), String(d)).toMatchObject({ kind: "EDO ACB", ratingA: r, status: "verify" });
     }
-    expect(selectBreaker(1251).kind).toBe("REVIEW");
+    expect(selectBreaker(4001).kind).toBe("REVIEW");
   });
 
   it("no design current -> no breaker, never a made-up value", () => {
     for (const d of [undefined, null, NaN, 0, -5]) expect(selectBreaker(d as number | undefined).kind).toBe("REVIEW");
   });
 
-  it("indicative CT primary: smallest standard primary not below the rating (1000 A -> 1000/5 A)", () => {
+  it("indicative CT primary: smallest standard primary not below the rating (1000 A -> 1000, 4000 A -> 4000)", () => {
     expect(ctPrimaryFor(1000)).toBe(1000);
     expect(ctPrimaryFor(630)).toBe(750);
+    expect(ctPrimaryFor(3200)).toBe(3200);
+    expect(ctPrimaryFor(4000)).toBe(4000);
     expect(ctPrimaryFor(undefined)).toBeUndefined();
   });
 });
@@ -116,7 +123,7 @@ describe("the workbook", () => {
     for (const h of [
       "Estimated / entered load current (A)", "Calculated Current (A) – specified PF", "Design Current (A)", "Feeder Protection Type",
       "Indicative Feeder Breaker Rating (A)", "Selected Breaker (MCCB / EDO ACB)", "Overload Relay Setting (A)",
-      "Panel Incomer Breaker Type (MCCB / ACB)", "Panel Incomer Breaker Rating (A)", "CT Ratio (Primary/5 A)", "CT Use / Metering",
+      "Panel Incomer Breaker Type (MCCB / ACB)", "Panel Incomer Breaker Rating (A)", "CT Ratio (Primary/1 A)", "CT Use / Metering",
       "Cable Design Current (A)", "Cable size / runs", "Cable length (m)", "Engineering Notes / Checks",
     ]) expect(names, h).toContain(h);
     // source columns kept intact, in order
@@ -144,7 +151,7 @@ describe("the workbook", () => {
     expect(core).not.toMatch(/creator|lastModifiedBy|Unknown/i);
   });
 
-  it("an incomer row at 800 A gets the 1000 A EDO ACB and a 1000/5 A CT; motor feeders get no CT or incomer", async () => {
+  it("an incomer row at 800 A gets the 1000 A EDO ACB and a 1000/1 A CT; motor feeders get no CT or incomer", async () => {
     const raw = await sample();
     const { buffer } = await mccWorkbookBuffer(raw, "s.xlsx");
     const wb = new ExcelJS.Workbook();
@@ -161,10 +168,10 @@ describe("the workbook", () => {
     };
     const inc = rowOf("MCC-2 incomer");
     expect(result(inc, "Panel Incomer Breaker Rating (A)")).toBe(1000);
-    expect(result(inc, "CT Ratio (Primary/5 A)")).toBe("1000/5 A");
+    expect(result(inc, "CT Ratio (Primary/1 A)")).toBe("1000/1 A");
     const pump = rowOf("Boiler feed water pump A (duty)");
     expect(result(pump, "Panel Incomer Breaker Rating (A)")).toBe("");
-    expect(result(pump, "CT Ratio (Primary/5 A)")).toBe("");
+    expect(result(pump, "CT Ratio (Primary/1 A)")).toBe("");
   });
 
   it("a row with no current data shows blanks and a missing-input note, not zeros", async () => {

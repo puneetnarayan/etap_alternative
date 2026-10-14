@@ -47,7 +47,7 @@ export default function Home() {
         <li>Amps to kVA: √3 × V × A at the voltage level (433 V or 690 V; the 433 V calculation voltage is editable).</li>
         <li>Each transformer is loaded to at most {pct(o.normalLimit)} in normal running and {pct(o.contingencyLimit)} with one transformer of its set out. These limits are fixed.</li>
         <li>Transformers come in sets of 3 (3 incomers, 2 bus couplers), with a set of 2 (2 incomers, 1 bus coupler) only for the remainder; the number grows when the loads cannot be balanced.</li>
-        <li>Breakers: MCCB 32 / 63 / 100 / 160 / 250 / 400 A, EDO ACB from 500 A (never a 630 A MCCB), engineering review between 400 and 500 A.</li>
+        <li>Breakers: MCCB 6 to 400 A from the BOM list (6, 10, 16, 25, 32, 50, 63, 100, 125, 160, 200, 250, 400 A), a 630 A feeder as MCCB or ACB, EDO ACB up to 4000 A, engineering review between 400 and 500 A unless 630 A is taken as an MCCB. CT secondary 1 A.</li>
       </ul>
 
       <h2>Standards worth knowing</h2>

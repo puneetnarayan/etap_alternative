@@ -5,7 +5,7 @@
 import ExcelJS from "exceljs";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
-  ACB_THRESHOLD_A, CT_PRIMARIES_A, DEFAULT_MCC_ASSUMPTIONS, breakerLabel, ctPrimaryFor, currentFor, selectBreaker,
+  ACB_THRESHOLD_A, CT_PRIMARIES_A, MCCB_RATINGS_A, DEFAULT_MCC_ASSUMPTIONS, breakerLabel, ctPrimaryFor, currentFor, selectBreaker,
   type MccAssumptions, type MccLoadType,
 } from "./mcc-breaker";
 import { parseLoadSheet } from "./transformer-sizing";
@@ -62,7 +62,7 @@ interface Col {
 // Notes!B4:B10 hold the assumptions the formulas use.
 const A = {
   pfGeneral: "Notes!$B$4", pfDol: "Notes!$B$5", pfVfd: "Notes!$B$6", eff: "Notes!$B$7",
-  mult: "Notes!$B$8", calcV: "Notes!$B$9", threshold: "Notes!$B$10",
+  mult: "Notes!$B$8", calcV: "Notes!$B$9", threshold: "Notes!$B$10", mccb630: "Notes!$B$11",
 } as const;
 
 const COLS: Col[] = [
@@ -77,13 +77,13 @@ const COLS: Col[] = [
   { key: "usedI", header: "Current used (A)", kind: "calc", width: 11, format: "#,##0", comment: "Entered current when valid, otherwise the calculated current." },
   { key: "src", header: "Current source", kind: "calc", width: 15 },
   { key: "design", header: "Design Current (A)", kind: "calc", width: 11, format: "#,##0", comment: "Design Current = Current used x multiplier (1.25 on the Notes sheet). A screening factor only, not a final protective-device rating." },
-  { key: "protType", header: "Feeder Protection Type", kind: "select", width: 17, comment: "Preliminary. Design current below 400 A or equal: MCCB; between 400 and 500 A: engineering review; 500 A and above: EDO ACB. Never a 630 A MCCB." },
-  { key: "protRating", header: "Indicative Feeder Breaker Rating (A)", kind: "select", width: 13, format: "#,##0", comment: "MCCB: 32, 63, 100, 160, 250, 400 A. EDO ACB: 630, 800, 1000, 1250 A. Blank when engineering review is required." },
+  { key: "protType", header: "Feeder Protection Type", kind: "select", width: 17, comment: "Preliminary. Design current up to 400 A: MCCB. 400 to 500 A: engineering review (or a 630 A MCCB if the Notes sheet says so). 500 A and above: EDO ACB." },
+  { key: "protRating", header: "Indicative Feeder Breaker Rating (A)", kind: "select", width: 13, format: "#,##0", comment: "MCCB: 6, 10, 16, 25, 32, 50, 63, 100, 125, 160, 200, 250, 400 A (630 A if chosen). EDO ACB: 630, 1000, 1250, 1600, 2000, 2500, 3200, 4000 A (630 to 800 A is built as 1000 A). Blank when engineering review is required." },
   { key: "selected", header: "Selected Breaker (MCCB / EDO ACB)", kind: "select", width: 22, comment: "Preliminary selection. Engineering approval required before procurement." },
   { key: "relay", header: "Overload Relay Setting (A)", kind: "select", width: 12, format: "#,##0.0", comment: "Indicative: DOL motors only, at the motor current used. VFD overload protection is set in the drive. Confirm against the nameplate." },
   { key: "incType", header: "Panel Incomer Breaker Type (MCCB / ACB)", kind: "select", width: 18, comment: "Only for rows whose description contains 'incomer'. An existing 800 A ACB incomer is standardised to 1000 A EDO ACB. Not sized from the sum of feeder ratings: needs maximum demand, diversity, fault level, etc." },
   { key: "incRating", header: "Panel Incomer Breaker Rating (A)", kind: "select", width: 13, format: "#,##0" },
-  { key: "ct", header: "CT Ratio (Primary/5 A)", kind: "select", width: 12, comment: "Indicative, incomer rows only: smallest standard primary not below the incomer rating. No CT is assigned to motor feeders. Confirm against metering/protection scheme, burden, accuracy class and saturation." },
+  { key: "ct", header: "CT Ratio (Primary/1 A)", kind: "select", width: 12, comment: "Indicative, incomer rows only: smallest standard primary not below the incomer rating, with a 1 A secondary. No CT is assigned to motor feeders. Confirm against metering/protection scheme, burden, accuracy class and saturation." },
   { key: "ctUse", header: "CT Use / Metering", kind: "select", width: 20 },
   { key: "cableI", header: "Cable Design Current (A)", kind: "calc", width: 12, format: "#,##0", comment: "Taken equal to the Design Current. Cable capacity, derating and voltage drop still to be checked." },
   { key: "cableSize", header: "Cable size / runs", kind: "input", width: 14, comment: "Taken from the source column if the load list has one; otherwise an input field left blank for the designer." },
@@ -164,17 +164,17 @@ export function buildMccWorkbook(
     const type = loadType(row.type);
     const res = currentFor({ type, kw: row.kw, voltageV: row.voltageV, ratedA: row.amps }, assumptions);
     if (res.usedA === undefined) missing++;
-    const sel = selectBreaker(res.designA, { acbThresholdA: ACB_THRESHOLD_A });
+    const sel = selectBreaker(res.designA, { acbThresholdA: ACB_THRESHOLD_A, mccb630: assumptions.mccb630 });
     const isIncomer = descCol >= 0 && /incomer/i.test(String(src[descCol] ?? ""));
     const is800 = isIncomer && row.amps === 800;
-    const incSel = isIncomer ? (is800 ? selectBreaker(res.designA, { existing800AcbIncomer: true }) : sel) : undefined;
+    const incSel = isIncomer ? (is800 ? selectBreaker(res.designA, { existing800AcbIncomer: true, mccb630: assumptions.mccb630 }) : sel) : undefined;
     const ct = incSel?.ratingA !== undefined ? ctPrimaryFor(incSel.ratingA) : undefined;
 
     const f = (key: string) => `${L[key]}${r}`;
     const desc = descCol >= 0 ? `${letter(descCol + 1)}${r}` : '""';
     const calcVResult = res.usedA === undefined && !(row.voltageV && row.voltageV > 0) ? "" : row.voltageV !== undefined ? (Math.round(row.voltageV) === 433 ? assumptions.calcVoltage433 : row.voltageV) : "";
-    const ctLadder = CT_PRIMARIES_A.reduceRight<string>((acc, p) => `IF(${f("incRating")}<=${p},"${p}/5 A",${acc})`, '""');
-    const ratingLadder = [32, 63, 100, 160, 250, 400, 630, 800, 1000].reduceRight<string>((acc, p) => `IF(${f("design")}<=${p},${p},${acc})`, "1250");
+    const ctLadder = CT_PRIMARIES_A.reduceRight<string>((acc, p) => `IF(${f("incRating")}<=${p},"${p}/1 A",${acc})`, '""');
+    const ratingLadder = [...MCCB_RATINGS_A, 630, 1000, 1250, 1600, 2000, 2500, 3200].reduceRight<string>((acc, p) => `IF(${f("design")}<=${p},${p},${acc})`, "4000");
 
     const noteParts =
       `IF(NOT(ISNUMBER(${f("usedI")})),"Missing input: give a rated current, or kW and voltage. ","")` +
@@ -183,7 +183,7 @@ export function buildMccWorkbook(
       `&IF(AND(${f("src")}="Calculated",${f("type")}="DOL"),"Motor efficiency is a provisional assumption: confirm. ","")` +
       `&IF(AND(${f("src")}="Calculated",${f("type")}="FEEDER"),"Feeder current calculated from kW at the specified PF: confirm. ","")` +
       `&IF(${f("type")}="VFD","Verify VFD input current and protection with the manufacturer's data. ","")` +
-      `&IF(${f("protType")}="Engineering review required",IF(${f("design")}>1250,"Design current above the largest standard ACB (1250 A): engineering review required. ","Design current above 400 A but below the ${ACB_THRESHOLD_A} A ACB threshold, or above permitted ratings: engineering review required (no undersized 400 A MCCB selected). "),"")` +
+      `&IF(${f("protType")}="Engineering review required",IF(${f("design")}>4000,"Design current above the largest standard ACB (4000 A): engineering review required. ","Design current above 400 A but below the ${ACB_THRESHOLD_A} A ACB threshold: engineering review required (no undersized 400 A MCCB selected; or take 630 A as an MCCB on the Notes sheet). "),"")` +
       `&IF(AND(ISNUMBER(${f("protRating")}),${f("protRating")}>630),"Above 630 A: ACB rating needs engineering verification. ","")` +
       `&IF(AND(ISNUMBER(${f("rated")}),${f("rated")}=800,ISNUMBER(SEARCH("incomer",${desc}))),"Existing 800 A ACB incomer standardised to 1000 A EDO ACB; re-evaluate CT ratio, busbar and fault level. ","")` +
       `&IF(${f("incType")}<>"","Incomer breaker and CT are provisional: size from maximum demand, diversity, fault level and discrimination, not the sum of feeders. ","")` +
@@ -217,7 +217,7 @@ export function buildMccWorkbook(
     fm("src", `IF(AND(ISNUMBER(${f("rated")}),${f("rated")}>0),"Entered current",IF(ISNUMBER(${f("calcI")}),"Calculated","Missing input"))`, res.source);
     fm("design", `IF(ISNUMBER(${f("usedI")}),${f("usedI")}*${A.mult},"")`, res.designA ?? "");
     fm("protType",
-      `IF(NOT(ISNUMBER(${f("design")})),"",IF(${f("design")}<=400,"MCCB",IF(${f("design")}<${A.threshold},"Engineering review required",IF(${f("design")}<=1250,"EDO ACB","Engineering review required"))))`,
+      `IF(NOT(ISNUMBER(${f("design")})),"",IF(${f("design")}<=400,"MCCB",IF(AND(${A.mccb630}=1,${f("design")}<=630),"MCCB",IF(${f("design")}<${A.threshold},"Engineering review required",IF(${f("design")}<=4000,"EDO ACB","Engineering review required")))))`,
       res.designA === undefined ? "" : sel.kind === "REVIEW" ? "Engineering review required" : sel.kind);
     fm("protRating", `IF(OR(${f("protType")}="",${f("protType")}="Engineering review required"),"",${ratingLadder})`, sel.ratingA ?? "");
     fm("selected", `IF(${f("protType")}="","",IF(${f("protRating")}="","Engineering review required",${f("protRating")}&" A "&${f("protType")}))`, res.designA === undefined ? "" : breakerLabel(sel));
@@ -228,7 +228,7 @@ export function buildMccWorkbook(
     fm("incRating",
       `IF(${f("incType")}="","",IF(${f("incType")}="Engineering review required","",IF(AND(ISNUMBER(${f("rated")}),${f("rated")}=800),1000,${f("protRating")})))`,
       incSel?.ratingA ?? "");
-    fm("ct", `IF(NOT(ISNUMBER(${f("incRating")})),"",${ctLadder})`, ct !== undefined ? `${ct}/5 A` : "");
+    fm("ct", `IF(NOT(ISNUMBER(${f("incRating")})),"",${ctLadder})`, ct !== undefined ? `${ct}/1 A` : "");
     fm("ctUse", `IF(${f("ct")}="","","Metering / protection: confirm scheme")`, ct !== undefined ? "Metering / protection: confirm scheme" : "");
     fm("cableI", `IF(ISNUMBER(${f("design")}),${f("design")},"")`, res.designA ?? "");
     if (cableSizeCol >= 0) fm("cableSize", `IF(${letter(cableSizeCol + 1)}${r}="","",${letter(cableSizeCol + 1)}${r})`);
@@ -282,6 +282,7 @@ function buildNotes(ws: ExcelJS.Worksheet, a: MccAssumptions) {
     ["Design current multiplier", a.designMultiplier, "Design Current = Current used x multiplier. Screening factor only.", "0.00"],
     ["Calculation voltage for the 433 V level (V)", a.calcVoltage433, "Line voltage used in the current formula for 433 V loads (other voltages are used as given).", "#,##0"],
     ["ACB threshold (A)", ACB_THRESHOLD_A, "Design current at or above this: 630 A EDO ACB (or larger ACB). Between 400 A and this value: engineering review.", "#,##0"],
+    ["630 A as MCCB instead of ACB (1 = yes, 0 = no)", a.mccb630 ? 1 : 0, "1: a requirement between 400 A and 630 A is a 630 A MCCB (customer preference). 0: it is an EDO ACB from 500 A, with engineering review between 400 and 500 A.", "0"],
   ];
   rows.forEach(([name, value, use, fmt], i) => {
     const r = 4 + i;
@@ -305,16 +306,16 @@ function buildNotes(ws: ExcelJS.Worksheet, a: MccAssumptions) {
     ]],
     ["Power factors", ["General feeder 0.7, DOL 0.7, VFD 0.9. For VFDs the specified PF of 0.9 is used as requested, but actual VFD input current should be checked against the manufacturer's data."]],
     ["Breaker ratings", [
-      "Permitted MCCB ratings: 32, 63, 100, 160, 250 and 400 A only. A 630 A MCCB is never selected: the 630 A class is an EDO ACB.",
-      "Standard ACB ratings: 630, 800, 1000 and 1250 A.",
-      "Design current up to 400 A: next permitted MCCB rating. 500 A and above: 630 A EDO ACB up to 630 A, then the next standard ACB (800 / 1000 / 1250 A) flagged for engineering verification. Above 1250 A: engineering review.",
+      "MCCB / MPCB / MCB ratings (the BOM list plus 32 and 63 A): 6, 10, 16, 25, 32, 50, 63, 100, 125, 160, 200, 250 and 400 A. A 630 A feeder may be an MCCB or an EDO ACB as the customer prefers (setting above). The device class per rating is to be defined later.",
+      "Standard ACB ratings: 630, 800, 1000, 1250, 1600, 2000, 2500, 3200 and 4000 A. A 630 to 800 A requirement is built as a 1000 A ACB; the 800 A sheets are kept for later use.",
+      "Design current up to 400 A: next MCCB rating in the list. 500 A and above: 630 A EDO ACB up to 630 A, then the next standard ACB (1000 / 1250 / 1600 / 2000 / 2500 / 3200 / 4000 A) flagged for engineering verification. Above 4000 A: engineering review.",
       "Between 400 A and 500 A: no breaker is selected. The row says 'Engineering review required' because MCCBs stop at 400 A and the ACB starts at 500 A; an undersized 400 A MCCB is never chosen silently.",
       "A load that exceeds the selected breaker is never capped silently; it is flagged.",
     ]],
     ["Incomer and CT", [
       "Incomer columns are filled only for rows whose description contains 'incomer'. An existing 800 A ACB incomer in the source is standardised to a 1000 A EDO ACB (this applies only where the source identifies it; other 800 A values are left alone).",
       "The incomer is never sized from the sum of the feeder ratings. It needs maximum demand, diversity, future expansion, busbar rating, fault level, breaking capacity and discrimination/coordination. Without that data the incomer is provisional.",
-      "CT ratios are indicative: the smallest standard primary (100, 150, 200, 250, 300, 400, 500, 600, 750, 800, 1000, 1250, 1500, 2000 A) not below the incomer rating, with a 5 A secondary. No CT is assigned to motor feeders. An 800/5 A ratio is not kept when the incomer is standardised to 1000 A. Confirm against maximum operating current, meter/relay requirements, accuracy class, burden, saturation and the protection scheme.",
+      "CT ratios are indicative: the smallest standard primary (100, 150, 200, 250, 300, 400, 500, 600, 750, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000 A) not below the incomer rating, with a 1 A secondary. No CT is assigned to motor feeders. An 800/1 A ratio is not kept when the incomer is standardised to 1000 A. Confirm against maximum operating current, meter/relay requirements, accuracy class, burden, saturation and the protection scheme.",
     ]],
     ["Cable columns", ["Cable size / runs and cable length are taken from the source columns when the load list has them; otherwise they are blank input fields for the designer."]],
     ["Final engineering checks (not done here)", [

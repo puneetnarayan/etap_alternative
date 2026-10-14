@@ -47,7 +47,10 @@ const ITEMS = [
   { href: "/", label: "Home", icon: "🏠" },
   { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
 ] as const;
-const AFTER_MCC = [{ href: "/load-flow", label: "Load flow", icon: "⚡" }] as const;
+const AFTER_MCC = [
+  { href: "/bom", label: "BOM", icon: "📋" },
+  { href: "/load-flow", label: "Load flow", icon: "⚡" },
+] as const;
 
 const MCC_TIP =
   "Purpose: prepares an MCC load schedule with preliminary breaker selections (MCCB / EDO ACB) as an Excel workbook. Click to generate it from your current load list.";
