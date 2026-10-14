@@ -119,7 +119,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError }), [status, generate, assumptions, loadList, loadError]);
   const link = (active: boolean) => ({
-    display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, textDecoration: "none",
+    display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", borderRadius: 6, textDecoration: "none",
     color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
     border: "none", font: "inherit", width: "100%", textAlign: "left" as const,
   });
@@ -129,7 +129,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <nav
           aria-label="Main"
-          style={{ width: open ? 250 : 52, flexShrink: 0, borderRight: "1px solid rgba(128,128,128,0.4)", padding: 8, boxSizing: "border-box" }}
+          style={{ width: open ? 220 : 48, flexShrink: 0, borderRight: "1px solid rgba(128,128,128,0.4)", padding: 8, boxSizing: "border-box" }}
         >
           <button
             type="button" aria-label={open ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={open}
@@ -144,7 +144,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             onClick={() => fileInput.current?.click()}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInput.current?.click(); }}
             style={{
-              border: "2px dashed #888", borderRadius: 8, padding: open ? "12px 8px" : "6px 0", textAlign: "center", cursor: "pointer",
+              border: "2px dashed #888", borderRadius: 8, padding: open ? "8px 6px" : "4px 0", textAlign: "center", cursor: "pointer",
               fontSize: 13, marginBottom: 8, overflowWrap: "anywhere", background: dragging ? "#C6EFCE" : "transparent", color: dragging ? "#000" : "inherit",
             }}
           >
@@ -177,7 +177,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             {status.kind === "error" && open && <span role="alert" style={{ color: "#c0392b" }}>Could not generate: {status.message}</span>}
           </div>
         </nav>
-        <div style={{ flex: 1, minWidth: 0, padding: "2rem 1.5rem" }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "0.75rem 1rem" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>{children}</div>
         </div>
       </div>

@@ -14,10 +14,10 @@ import { useShell } from "../AppShell";
 // Numbers: only percentages have a decimal place; everything else is whole (power factor keeps two decimals).
 const BORDER = `1px solid ${REPORT_COLORS.border}`;
 const th = {
-  padding: "4px 10px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const,
+  padding: "2px 6px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const,
   textAlign: "center" as const, whiteSpace: "nowrap" as const,
 };
-const td = { padding: "4px 10px", border: BORDER, textAlign: "center" as const };
+const td = { padding: "2px 6px", border: BORDER, textAlign: "center" as const };
 const left = { textAlign: "left" as const };
 const shade = (background: string) => ({ background, color: "#000" });
 const withinColor = (ok: boolean) => (ok ? REPORT_COLORS.within : REPORT_COLORS.over);
