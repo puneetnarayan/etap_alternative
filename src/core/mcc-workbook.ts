@@ -137,7 +137,8 @@ export function buildMccWorkbook(
     cell.value = (header[c] as ExcelJS.CellValue) ?? "";
     style(cell, SOURCE, true);
     cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-    ws.getColumn(c + 1).width = Math.min(45, Math.max(12, String(header[c] ?? "").length + 2));
+    const longest = Math.max(String(header[c] ?? "").length, ...raw.slice(headerIdx + 1).map((r) => String(r[c] ?? "").length));
+    ws.getColumn(c + 1).width = Math.min(48, Math.max(12, longest + 3));
   }
   COLS.forEach((c, i) => {
     const cell = headRow.getCell(width + 1 + i);

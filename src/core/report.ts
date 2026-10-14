@@ -131,6 +131,12 @@ const noteBanner = (text: string, span = 5): Row => [
 
 /** A table-style header spanning `span` columns for a key/value block on the Summary sheet. */
 const blockHeader = (v: string, span = 2): Row => [head(v), ...Array.from({ length: span - 1 }, () => head(""))];
+/** A key / long-text row on the Summary sheet: the text is merged across the table width so it is never clipped. */
+const kvText = (k: string, text: string, span = 8): Row => [
+  cell(k),
+  { value: text, align: "left", columnSpan: span - 1, ...BORDER },
+  ...Array<ReportCell>(span - 2).fill(null),
+];
 
 const textOf = (c: ReportCell): string => (c === null || c === undefined ? "" : typeof c === "object" ? String(c.value) : String(c));
 
@@ -141,6 +147,7 @@ function autoColumns(rows: Row[], min = 8, max = 60): { width: number }[] {
   for (const r of rows) {
     if (r.filter((c) => textOf(c) !== "").length <= 1) continue;
     r.forEach((c, i) => {
+      if (typeof c === "object" && c !== null && (c.columnSpan ?? 1) > 1) return; // merged text spreads over the table
       const raw = typeof c === "object" && c !== null ? c.value : c;
       const len = typeof raw === "number" ? 11 : textOf(c).length * 1.1 + 3;
       widths[i] = Math.min(max, Math.max(widths[i], len));
@@ -196,8 +203,8 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
   const data: Row[] = [
     [title("Transformer sizing report")],
     [],
-    kv("Transformer", cell(o.transformerLabel)),
-    ...(o.fileName ? [kv("Source file", cell(o.fileName))] : []),
+    kvText("Transformer", o.transformerLabel),
+    ...(o.fileName ? [kvText("Source file", o.fileName)] : []),
     [],
     blockHeader("Assumptions"),
     kv("Motor efficiency (%)", pct(op.efficiency * 100)),
@@ -206,10 +213,10 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Power factor, feeders", n(op.powerFactor.FEEDER, "0.00")),
     kv("Max transformer loading, normal running (%)", pct(normalPct)),
     kv("Max transformer loading, one transformer out (%)", pct(contPct)),
-    kv("Ratings considered (kVA)", cell([...op.ratingsKva].sort((x, y) => x - y).join(", "))),
+    kvText("Ratings considered (kVA)", [...op.ratingsKva].sort((x, y) => x - y).join(", ")),
     kv("Voltage used to convert amps to kVA (V)", n(op.calculationVoltageV[r.selectedVoltageV] ?? r.selectedVoltageV)),
-    kv("Total kVA basis", cell("Arithmetic sum of each load's kVA")),
-    kv("Load factor", cell("All loads at 100 % (working W and standby S)")),
+    kvText("Total kVA basis", "Arithmetic sum of each load's kVA"),
+    kvText("Load factor", "All loads at 100 % (working W and standby S)"),
     [],
     blockHeader("Total load"),
     kv("Loads included", cell(r.loads.length)),
@@ -217,8 +224,8 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Spare feeders added (not in the calculation)", cell(r.spares.length)),
     kv(op.mccFeeders.length > 0 ? "Total kVA of the load list (before PMCC/IMCC feeders)" : "Total kVA used for sizing", n(r.totalKva)),
     ...(op.mccFeeders.length > 0
-      ? [kv("PMCC/IMCC feeders added to every set (in the calculation)", cell(op.mccFeeders.map((f) => `${f.count} × ${f.amps} A (${f.counted ?? f.count} counted)`).join(", "))),
-         kv("Their placement", cell("Half of each kind on each side of the middle transformer (set of 3) or of the bus coupler (set of 2)"))]
+      ? [kvText("PMCC/IMCC feeders added to every set (in the calculation)", op.mccFeeders.map((f) => `${f.count} × ${f.amps} A (${f.counted ?? f.count} counted)`).join(", ")),
+         kvText("Their placement", "Half of each kind on each side of the middle transformer (set of 3) or of the bus coupler (set of 2)")]
       : []),
     ...(o.includePower
       ? [
@@ -232,7 +239,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     rec
       ? kv("Recommended", verdict(`${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (sets of ${rec.layout.join(" + ")})` : ""}`, true))
       : kv("Recommended", verdict(r.blockers.length > 0 ? "None: a load is too big for any transformer section" : "No configuration fits the ratings considered", false)),
-    ...r.blockers.map((m): Row => [cell("Cannot be placed"), cell(m)]),
+    ...r.blockers.map((m): Row => kvText("Cannot be placed", m)),
     ...(rec ? [kv("Incomers", cell(rec.count)), kv("Bus couplers", cell(rec.count - rec.layout.length))] : []),
     [],
     [label("Numbers of transformers tried")],
