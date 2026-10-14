@@ -3,8 +3,8 @@
 Sidebar entry **MCC Load List / Breaker Selection** (route `/mcc-load-list`). The sidebar has a hamburger button and starts **expanded** on every fresh page load (its state is not saved).
 
 ## Behaviour
-- Clicking the entry opens the page **and** builds the workbook from the last load list used in this browser tab (a list dropped on the Transformer sizing page, or on the MCC page, is kept in `sessionStorage`). Only the click triggers it; re-renders do not.
-- No list yet: the page says so and offers a drop zone (dropping a file builds and downloads the workbook straight away) and the sample file link. Nothing is invented.
+- Clicking the entry opens the page **and** builds the workbook from the last load list used in this browser tab (the app-wide load list added at the top of the sidebar, kept in `sessionStorage`). Only the click triggers it; re-renders do not.
+- No list yet: the page says so and points to the upload area at the top of the sidebar. Nothing is invented.
 - It is a web app, so "open in Excel" is a **download** (`MCC_Load_List_Breaker_Selection_<date-time>.xlsx`); browsers cannot launch desktop Excel themselves, and the page says so. A loading state and errors are shown in the sidebar and on the page.
 - Built with ExcelJS (MIT), because write-excel-file has no filters, cell notes or drop-downs. It is loaded only when the workbook is generated.
 

@@ -1,14 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { readSheet } from "read-excel-file/universal";
+import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
   sizeTransformers,
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
 } from "@/core";
-import { saveLoadList } from "../loadListStore";
+import { useShell } from "../AppShell";
 
 // Tables follow the Excel report: light orange headers, thin borders, numbers and percentages centred,
 // green / red for within / over a limit, pastels for W, S, DOL, VFD and Feeder.
@@ -73,12 +72,13 @@ function reportFileName(inputName: string, volts: number) {
 }
 
 export default function TransformerSizing() {
-  const [rows, setRows] = useState<RawLoadRow[] | null>(null);
+  const { loadList } = useShell();
+  const parsed = useMemo(() => (loadList ? parseLoadSheet(loadList.sheet) : null), [loadList]);
+  const rows: RawLoadRow[] | null = parsed && parsed.errors.length === 0 ? parsed.rows : null;
+  const loadError = parsed ? parsed.errors.join(" ") : "";
   // The uploaded sheet exactly as read, included in the Excel report as "Original load list".
-  const [rawSheet, setRawSheet] = useState<readonly (readonly unknown[])[]>([]);
-  const [fileName, setFileName] = useState("");
-  const [loadError, setLoadError] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const rawSheet: readonly (readonly unknown[])[] = loadList?.sheet ?? [];
+  const fileName = loadList?.fileName ?? "";
   const [choice, setChoice] = useState<VoltageChoice>("433");
   const [calcV433, setCalcV433] = useState("433");
   const [combination, setCombination] = useState<Combination>("3");
@@ -90,7 +90,14 @@ export default function TransformerSizing() {
   const [includePower, setIncludePower] = useState(true);
   const [withMcc, setWithMcc] = useState(true);
   const [report, setReport] = useState<ReportStatus>({ kind: "idle" });
-  const input = useRef<HTMLInputElement>(null);
+
+  // A new load list starts with 433 V when the file has it, otherwise the other level.
+  useEffect(() => {
+    if (!rows) return;
+    const levels = presentVoltages(rows);
+    setChoice(String(levels.includes(433) || levels.length === 0 ? 433 : levels[0]) as VoltageChoice);
+    setReport({ kind: "idle" });
+  }, [rows]);
 
   const present = useMemo(() => presentVoltages(rows), [rows]);
   const both = present.length === 2;
@@ -137,66 +144,18 @@ export default function TransformerSizing() {
     }
   }
 
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
-    setLoadError("");
-    setReport({ kind: "idle" });
-    if (!/\.xlsx$/i.test(file.name)) {
-      setLoadError("Please use an Excel .xlsx file.");
-      return;
-    }
-    try {
-      const sheet = await readSheet(await file.arrayBuffer());
-      const parsed = parseLoadSheet(sheet);
-      if (parsed.errors.length) {
-        setRows(null);
-        setLoadError(parsed.errors.join(" "));
-        return;
-      }
-      saveLoadList(file.name, sheet);
-      setRows(parsed.rows);
-      setRawSheet(sheet);
-      setFileName(file.name);
-      // Start with 433 V when the file has it, otherwise the other level; the report is created and
-      // downloaded as soon as the file is in.
-      const levels = presentVoltages(parsed.rows);
-      const startV = levels.includes(433) || levels.length === 0 ? 433 : levels[0];
-      setChoice(String(startV) as VoltageChoice);
-      const tx = TRANSFORMER_OPTIONS.find((t) => t.secondaryV === startV)!;
-      const first = sizeTransformers(parsed.rows, startV, opts);
-      if (first.loads.length > 0) await makeReport(first, tx.label, file.name, sheet);
-      else setReport({ kind: "error", message: `No usable loads at ${startV} V, so no Excel report was created.` });
-    } catch (e) {
-      setRows(null);
-      setLoadError(`Could not read that file: ${(e as Error).message}`);
-    }
-  }
-
   return (
     <div>
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); void handleFile(e.dataTransfer.files[0]); }}
-        onClick={() => input.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }}
-        style={{
-          border: "2px dashed #888", borderRadius: 8, padding: "28px 16px", textAlign: "center", cursor: "pointer",
-          background: dragging ? GOOD : "transparent",
-        }}
-      >
-        {fileName ? <>Loaded <b>{fileName}</b>. Drop another file to replace it.</> : <>Drag and drop your load list (.xlsx) here, or click to choose a file</>}
-        <input ref={input} type="file" accept=".xlsx" hidden onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
-      </div>
+      <p>
+        {fileName ? <>Load list: <b>{fileName}</b>. To use another file, drop it at the top of the sidebar.</> : <>No load list yet: add one at the top of the sidebar (.xlsx).</>}
+      </p>
       {loadError && <p role="alert" style={{ color: BAD }}>{loadError}</p>}
       <p style={{ margin: "8px 0" }}>
         <label style={{ cursor: "pointer" }}>
           <input type="checkbox" role="switch" checked={includePower} onChange={(e) => setIncludePower(e.target.checked)} />{" "}
           Include kW, kvar and power factor in the Excel report
         </label>
-        <span> — the report is created and downloaded automatically as soon as you drop the file.</span>
+        <span> — then use "Download Excel report" under the result.</span>
       </p>
       <div aria-live="polite">
         {report.kind === "busy" && <p>Preparing the Excel report…</p>}
@@ -332,7 +291,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
           </div>
           <div style={{ margin: "12px 0" }}>
             <button onClick={onDownload} disabled={busy} style={{ padding: "6px 14px", fontSize: 15 }}>
-              {busy ? "Preparing…" : "Download Excel report again"}
+              {busy ? "Preparing…" : "Download Excel report"}
             </button>
             <span> for the current settings (voltage, rating, number of transformers).</span>
           </div>

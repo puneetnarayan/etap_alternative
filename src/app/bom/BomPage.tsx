@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { readSheet } from "read-excel-file/universal";
+import { useMemo, useState } from "react";
 import { REPORT_COLORS, bomItems, mccRows, type BomItem } from "@/core";
 import { useShell } from "../AppShell";
-import { loadLoadList, saveLoadList, type StoredLoadList } from "../loadListStore";
+import type { StoredLoadList } from "../loadListStore";
 
 const BORDER = `1px solid ${REPORT_COLORS.border}`;
 const th = { padding: "4px 10px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const, textAlign: "center" as const };
@@ -16,13 +15,8 @@ type Status = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 
 export default function BomPage() {
-  const { assumptions } = useShell();
-  const [stored, setStored] = useState<StoredLoadList | null>(null);
+  const { assumptions, loadList: stored } = useShell();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => { setStored(loadLoadList()); }, []);
 
   const items = useMemo(() => (stored ? bomItems(mccRows(stored.sheet, assumptions).rows) : null), [stored, assumptions]);
 
@@ -44,38 +38,11 @@ export default function BomPage() {
     }
   }
 
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
-    setError("");
-    if (!/\.xlsx$/i.test(file.name)) { setError("Please use an Excel .xlsx file."); return; }
-    try {
-      const sheet = await readSheet(await file.arrayBuffer());
-      saveLoadList(file.name, sheet);
-      const list = { fileName: file.name, sheet: sheet.map((r) => [...r]) } as StoredLoadList;
-      setStored(list);
-      const its = bomItems(mccRows(list.sheet, assumptions).rows);
-      await download(list, its);
-    } catch (e) {
-      setError(`Could not read that file: ${(e as Error).message}`);
-    }
-  }
-
   const actions = items?.filter((i) => i.action).length ?? 0;
   return (
     <div>
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); void handleFile(e.dataTransfer.files[0]); }}
-        onClick={() => input.current?.click()}
-        style={{ border: "2px dashed #888", borderRadius: 8, padding: "28px 16px", textAlign: "center", cursor: "pointer", background: dragging ? REPORT_COLORS.within : "transparent" }}
-      >
-        Drag and drop a load list (.xlsx) here, or click to choose a file. The BOM workbook is created and downloaded straight away.
-        <input ref={input} type="file" accept=".xlsx" hidden onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
-      </div>
-      {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
       <p>
-        {stored ? <>Current load list: <b>{stored.fileName}</b> (the last one used in this tab). </> : <>No load list has been used in this tab yet. </>}
+        {stored ? <>Load list: <b>{stored.fileName}</b>. </> : <>No load list yet: add one at the top of the sidebar. </>}
         <button type="button" disabled={!stored || !items || status.kind === "busy"} onClick={() => stored && items && void download(stored, items)}>
           Download the BOM workbook
         </button>
