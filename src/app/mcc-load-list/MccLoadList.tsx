@@ -80,11 +80,13 @@ export default function MccLoadList() {
           <label>Power factor, VFD <input style={{ width: 60 }} value={text.pfVfd} onChange={(e) => edit("pfVfd", 0, 1)(e.target.value)} /></label>
           <label>DOL motor efficiency (%, provisional) <input style={{ width: 60 }} value={text.efficiency} onChange={(e) => edit("efficiency", 0, 100, 100)(e.target.value)} /></label>
           <label>Design current multiplier <input style={{ width: 60 }} value={text.designMultiplier} onChange={(e) => edit("designMultiplier", 0, 5)(e.target.value)} /></label>
+          <label>
+            <input type="checkbox" checked={a.mccb630} onChange={(e) => setAssumptions({ ...a, mccb630: e.target.checked })} /> 630 A as MCCB (instead of ACB)
+          </label>
           <label>Voltage used for 433 V loads (V) <input style={{ width: 60 }} value={text.calcVoltage433} onChange={(e) => edit("calcVoltage433", 0, 1000)(e.target.value)} /></label>
         </div>
         <p style={{ margin: "4px 0", fontSize: 14 }}>
-          The workbook uses the same values (on its Notes sheet). Fixed rules: MCCB 32 / 63 / 100 / 160 / 250 / 400 A; 500 A and above EDO ACB (never a 630 A MCCB);
-          400 to 500 A engineering review. A rated current in the load list is used in preference to kW.
+          The workbook uses the same values (on its Notes sheet). Rules: MCCB 6 / 10 / 16 / 25 / 32 / 50 / 63 / 100 / 125 / 160 / 200 / 250 / 400 A; 630 A as MCCB or ACB; EDO ACB from 500 A up to 4000 A; 400 to 500 A engineering review unless 630 A is taken as MCCB. A rated current in the load list is used in preference to kW.
         </p>
       </fieldset>
       {result && <Results result={result} />}
@@ -143,7 +145,7 @@ function Results({ result }: { result: ReturnType<typeof mccRows> }) {
                   <td style={{ ...selectionCell(r), minWidth: 150 }}>{r.current.designA === undefined ? "" : breakerLabel(r.breaker)}</td>
                   <td style={td}>{r.relayA === undefined ? "" : r.relayA.toFixed(1)}</td>
                   <td style={td}>{r.incomer ? breakerLabel(r.incomer) : ""}</td>
-                  <td style={td}>{r.ctPrimaryA ? `${r.ctPrimaryA}/5 A` : ""}</td>
+                  <td style={td}>{r.ctPrimaryA ? `${r.ctPrimaryA}/1 A` : ""}</td>
                   <td style={{ ...td, ...left, fontSize: 13, minWidth: 340 }}>{r.flags.join("; ")}</td>
                 </tr>
               );
