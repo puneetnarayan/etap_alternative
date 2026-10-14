@@ -46,7 +46,7 @@ export interface SizingOptions {
   /**
    * Voltage (V) used to turn a current into kVA (sqrt(3) x V x A) for loads given only in amps, by
    * nominal voltage level. A level that is not listed uses its own value. 433 V loads are calculated
-   * at 420 V; the 433 V label, and matching loads to the 433 V transformer, are unchanged.
+   * at the value given here (none by default: 433 V is calculated at 433 V).
    */
   calculationVoltageV: Record<number, number>;
   /**
@@ -89,7 +89,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   maxTransformers: 20,
   stepUp: "min-installed",
   totalBasis: "arithmetic",
-  calculationVoltageV: { 433: 420 },
+  calculationVoltageV: {},
   mccFeeders: [],
 };
 

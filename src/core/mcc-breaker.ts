@@ -85,7 +85,7 @@ export interface MccAssumptions {
 }
 
 export const DEFAULT_MCC_ASSUMPTIONS: MccAssumptions = {
-  pfGeneral: 0.7, pfDol: 0.7, pfVfd: 0.9, efficiency: 0.93, designMultiplier: 1.25, calcVoltage433: 420,
+  pfGeneral: 0.7, pfDol: 0.7, pfVfd: 0.9, efficiency: 0.93, designMultiplier: 1.25, calcVoltage433: 433,
 };
 
 export interface CurrentInput {

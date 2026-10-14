@@ -71,11 +71,11 @@ describe("current and power factor", () => {
     expect(currentFor({ type: "VFD", kw: 100, voltageV: 415 }).pf).toBe(0.9);
   });
 
-  it("hand-calculated: 185 kW DOL at 433 V (calculated at 420 V), 0.7, 93 % = 390.6 A; VFD 250 kW = 381.8 A; feeder 100 kW at 690 V = 119.5 A", () => {
-    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).calculatedA).toBeCloseTo(390.64, 1); // 185000 / (1.7321 x 420 x 0.7 x 0.93)
-    expect(currentFor({ type: "VFD", kw: 250, voltageV: 433 }).calculatedA).toBeCloseTo(381.85, 1); // no efficiency for VFD
+  it("hand-calculated: 185 kW DOL at 433 V, 0.7, 93 % = 378.9 A; VFD 250 kW = 370.4 A; feeder 100 kW at 690 V = 119.5 A", () => {
+    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).calculatedA).toBeCloseTo(378.92, 1); // 185000 / (1.7321 x 433 x 0.7 x 0.93)
+    expect(currentFor({ type: "VFD", kw: 250, voltageV: 433 }).calculatedA).toBeCloseTo(370.38, 1); // no efficiency for VFD
     expect(currentFor({ type: "FEEDER", kw: 100, voltageV: 690 }).calculatedA).toBeCloseTo(119.5, 1);
-    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).designA).toBeCloseTo(390.64 * 1.25, 1);
+    expect(currentFor({ type: "DOL", kw: 185, voltageV: 433 }).designA).toBeCloseTo(378.92 * 1.25, 1);
   });
 
   it("a valid rated current is preferred to a calculation", () => {
@@ -186,7 +186,7 @@ describe("the workbook", () => {
 describe("rows for the page", () => {
   const sheet = [
     ["Description", "Type", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)"],
-    ["Pump", "DOL", null, 185, 433], // 390.6 A calculated, design 488.3 A: review
+    ["Pump", "DOL", null, 185, 433], // 378.9 A calculated, design 473.6 A: review
     ["Fan", "VFD", null, 200, 433], // 305.5 A, design 381.8 A: 400 A MCCB
     ["Crusher", "DOL", null, 315, 433], // 665.2 A, design 831.4 A: 1000 A EDO ACB
     ["Dosing", "DOL", 180, null, 433], // entered 180 A, design 225 A: 250 A MCCB
@@ -200,7 +200,7 @@ describe("rows for the page", () => {
     expect(r.rows.map((x) => breakerLabel(x.breaker))).toEqual([
       "Engineering review required", "400 A MCCB", "1000 A EDO ACB", "250 A MCCB", "1000 A EDO ACB", "Engineering review required",
     ]);
-    expect(r.rows[0].current.designA).toBeCloseTo(488.3, 1);
+    expect(r.rows[0].current.designA).toBeCloseTo(473.6, 1);
     expect(r.rows[3].current.source).toBe("Entered current");
   });
 
@@ -209,7 +209,7 @@ describe("rows for the page", () => {
     expect(breakerLabel(r.rows[4].incomer!)).toBe("1000 A EDO ACB");
     expect(r.rows[4].ctPrimaryA).toBe(1000);
     expect(r.rows.filter((x) => x.ctPrimaryA !== undefined)).toHaveLength(1);
-    expect(r.rows.map((x) => x.relayA)).toEqual([390.6, undefined, 665.2, 180, undefined, undefined]);
+    expect(r.rows.map((x) => x.relayA)).toEqual([378.9, undefined, 645.2, 180, undefined, undefined]);
   });
 
   it("summary counts, with the row that has no data counted as missing, not as review", () => {

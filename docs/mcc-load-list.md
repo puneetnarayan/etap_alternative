@@ -19,7 +19,7 @@ The page shows the same figures as a table (colours as on the Transformer sizing
 Added columns: load type, voltage, kW and rated current as read; calculation voltage; power factor; efficiency; entered current; calculated current; current used and its source; design current; feeder protection type, indicative rating, selected breaker; overload relay setting; incomer type, rating; CT ratio and use; cable design current; cable size / runs and length (linked to source columns of that name if the list has them, otherwise blank inputs); engineering notes.
 
 ## Rules
-- `I = kW × 1000 / (√3 × V × PF)`; DOL motors in kW also ÷ efficiency (kW taken as motor output). PF: general feeder 0.7, DOL 0.7, VFD 0.9. Efficiency is a **provisional 93 %**, editable on the Notes sheet and per row. The 433 V level is calculated at 420 V, as in the transformer tool (editable).
+- `I = kW × 1000 / (√3 × V × PF)`; DOL motors in kW also ÷ efficiency (kW taken as motor output). PF: general feeder 0.7, DOL 0.7, VFD 0.9. Efficiency is a **provisional 93 %**, editable on the Notes sheet and per row. The 433 V level is calculated at 433 V, as in the transformer tool (editable).
 - A valid rated current (the Amps column) is used in preference to a calculation. Missing kW / voltage / DOL efficiency leaves the calculated cells blank and the notes say what is missing; no zeros.
 - `Design Current = Current used × 1.25` (editable screening factor, not a final device rating).
 - Breaker: up to 400 A → next of 32, 63, 100, 160, 250, 400 A MCCB; above 400 A and below 500 A → **engineering review** (no undersized 400 A MCCB); 500 A to 630 A → 630 A EDO ACB; above 630 A → 800 / 1000 / 1250 A EDO ACB flagged for verification; above 1250 A → review. A 630 A MCCB is never selected.

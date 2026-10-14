@@ -44,7 +44,7 @@ export default function Home() {
       <h2>Design basis used in the tools</h2>
       <ul>
         <li>Motor kVA = kW ÷ (power factor × efficiency), with power factor {a.pfDol} for DOL motors, {a.pfVfd} for VFD motors and {a.pfGeneral} for other feeders, and {pct(o.efficiency)} efficiency in the transformer tool.</li>
-        <li>Amps to kVA: √3 × V × A, with {a.calcVoltage433} V used for the 433 V level.</li>
+        <li>Amps to kVA: √3 × V × A at the voltage level (433 V or 690 V; the 433 V calculation voltage is editable).</li>
         <li>Each transformer is loaded to at most {pct(o.normalLimit)} in normal running and {pct(o.contingencyLimit)} with one transformer of its set out. These limits are fixed.</li>
         <li>Transformers come in sets of 3 (3 incomers, 2 bus couplers), with a set of 2 (2 incomers, 1 bus coupler) only for the remainder; the number grows when the loads cannot be balanced.</li>
         <li>Breakers: MCCB 32 / 63 / 100 / 160 / 250 / 400 A, EDO ACB from 500 A (never a 630 A MCCB), engineering review between 400 and 500 A.</li>
