@@ -110,8 +110,8 @@ export function buildMccWorkbook(
   // No author metadata.
   wb.creator = ""; wb.lastModifiedBy = "";
   wb.calcProperties.fullCalcOnLoad = true;
-  const ws = wb.addWorksheet("Load list", { views: [{ state: "frozen", ySplit: 4, xSplit: 0 }] });
-  const notes = wb.addWorksheet("Notes");
+  const ws = wb.addWorksheet("Load list", { views: [{ state: "frozen", ySplit: 4, xSplit: 0, showGridLines: false }] });
+  const notes = wb.addWorksheet("Notes", { views: [{ showGridLines: false }] });
 
   // Column map: source columns first (kept as they are), then the added ones.
   const L: Record<string, string> = {};
@@ -119,9 +119,9 @@ export function buildMccWorkbook(
   const last = width + COLS.length;
 
   ws.getCell("A1").value = "MCC Load List / Breaker Selection (preliminary)";
-  ws.getCell("A1").font = { bold: true, size: 14 };
+  ws.getCell("A1").font = { name: "Calibri", bold: true, size: 16 };
   ws.getCell("A2").value = `Source: ${sourceName || "load list"}. Blue = input data, green = calculated, yellow = preliminary selection. Not a substitute for approved electrical design: see the Notes sheet.`;
-  ws.getCell("A2").font = { italic: true };
+  ws.getCell("A2").font = { name: "Calibri", italic: true, size: 11 };
 
   const HEAD = 4;
   const headRow = ws.getRow(HEAD);
@@ -129,7 +129,7 @@ export function buildMccWorkbook(
   const style = (cell: ExcelJS.Cell, fill: string, bold = false) => {
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     cell.border = BORDER;
-    cell.font = { bold };
+    cell.font = { name: "Calibri", size: 11, bold };
     cell.alignment = { vertical: "middle", wrapText: true };
   };
   for (let c = 0; c < width; c++) {
@@ -265,13 +265,13 @@ function buildNotes(ws: ExcelJS.Worksheet, a: MccAssumptions) {
   ws.getColumn(2).width = 16;
   ws.getColumn(3).width = 90;
   ws.getCell("A1").value = "Notes: MCC Load List / Breaker Selection";
-  ws.getCell("A1").font = { bold: true, size: 14 };
+  ws.getCell("A1").font = { name: "Calibri", bold: true, size: 16 };
   ws.getCell("A2").value = "Preliminary engineering aid. Edit the yellow assumption cells; the Load list formulas follow them.";
-  ws.getCell("A2").font = { italic: true };
+  ws.getCell("A2").font = { name: "Calibri", italic: true, size: 11 };
   const h = ws.getRow(3);
   ["Assumption (editable)", "Value", "Used for"].forEach((t, i) => {
     const c = h.getCell(i + 1);
-    c.value = t; c.font = { bold: true }; c.border = BORDER;
+    c.value = t; c.font = { name: "Calibri", size: 11, bold: true }; c.border = BORDER;
     c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
   });
   const rows: [string, number, string, string][] = [
@@ -326,7 +326,7 @@ function buildNotes(ws: ExcelJS.Worksheet, a: MccAssumptions) {
   let r = 4 + rows.length + 1;
   for (const [title, lines] of text) {
     const t = ws.getCell(r, 1);
-    t.value = title; t.font = { bold: true }; t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
+    t.value = title; t.font = { name: "Calibri", size: 13, bold: true }; t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
     ws.getCell(r, 2).fill = t.fill; ws.getCell(r, 3).fill = t.fill;
     r++;
     for (const line of lines) {

@@ -63,12 +63,16 @@ export interface ReportOptions {
 
 /* ------------------------------ cell helpers ------------------------------ */
 
+/** One readable family and size for the whole report (titles and labels are larger). */
+export const REPORT_FONT = "Calibri";
+export const REPORT_FONT_SIZE = 11;
+
 const BORDER: Style = { borderStyle: "thin", borderColor: REPORT_COLORS.border };
 
 /** Sheet title. */
-const title = (v: string): ReportCell => ({ value: v, fontWeight: "bold", fontSize: 14 });
+const title = (v: string): ReportCell => ({ value: v, fontWeight: "bold", fontSize: 16 });
 /** Bold label above a table. */
-const label = (v: string): ReportCell => ({ value: v, fontWeight: "bold", fontSize: 12 });
+const label = (v: string): ReportCell => ({ value: v, fontWeight: "bold", fontSize: 13 });
 /** Table header cell: light orange. */
 const head = (v: string): ReportCell => ({
   value: v, fontWeight: "bold", backgroundColor: REPORT_COLORS.header, align: "center", alignVertical: "center", ...BORDER,
@@ -138,7 +142,7 @@ function autoColumns(rows: Row[], min = 8, max = 60): { width: number }[] {
     if (r.filter((c) => textOf(c) !== "").length <= 1) continue;
     r.forEach((c, i) => {
       const raw = typeof c === "object" && c !== null ? c.value : c;
-      const len = typeof raw === "number" ? 11 : textOf(c).length + 2;
+      const len = typeof raw === "number" ? 11 : textOf(c).length * 1.1 + 3;
       widths[i] = Math.min(max, Math.max(widths[i], len));
     });
   }
@@ -454,5 +458,5 @@ export function buildReportSheets(result: SizingResult, o: ReportOptions): Repor
 }
 
 export async function buildReportBlob(result: SizingResult, o: ReportOptions): Promise<Blob> {
-  return writeExcelFile(buildReportSheets(result, o)).toBlob();
+  return writeExcelFile(buildReportSheets(result, o), { fontFamily: REPORT_FONT, fontSize: REPORT_FONT_SIZE }).toBlob();
 }
