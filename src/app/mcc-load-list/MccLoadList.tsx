@@ -61,8 +61,8 @@ export default function MccLoadList() {
 
 // Same look as the Transformer sizing page: light orange headers, thin borders, centred numbers, whole numbers.
 const BORDER = `1px solid ${REPORT_COLORS.border}`;
-const th = { padding: "4px 10px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const, textAlign: "center" as const };
-const td = { padding: "4px 10px", border: BORDER, textAlign: "center" as const };
+const th = { padding: "2px 6px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const, textAlign: "center" as const };
+const td = { padding: "2px 6px", border: BORDER, textAlign: "center" as const };
 const left = { textAlign: "left" as const };
 const YELLOW = "#FFF2CC"; // preliminary / verify (same yellow as the workbook)
 

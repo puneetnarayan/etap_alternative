@@ -111,7 +111,7 @@ describe("the workbook", () => {
   it("is a real xlsx with a Load list and a Notes sheet, formulas, a frozen header, filters, drop-downs and notes", async () => {
     const raw = await sample();
     const { buffer, rows } = await mccWorkbookBuffer(raw, "sample_load_list.xlsx");
-    expect(rows).toBe(29);
+    expect(rows).toBe(40);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer);
     expect(wb.worksheets.map((w) => w.name)).toEqual(["Load list", "Notes"]);

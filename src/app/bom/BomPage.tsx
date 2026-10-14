@@ -6,8 +6,8 @@ import { useShell } from "../AppShell";
 import type { StoredLoadList } from "../loadListStore";
 
 const BORDER = `1px solid ${REPORT_COLORS.border}`;
-const th = { padding: "4px 10px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const, textAlign: "center" as const };
-const td = { padding: "4px 10px", border: BORDER, textAlign: "center" as const, verticalAlign: "top" as const };
+const th = { padding: "2px 6px", border: BORDER, background: REPORT_COLORS.header, color: "#000", fontWeight: "bold" as const, textAlign: "center" as const };
+const td = { padding: "2px 6px", border: BORDER, textAlign: "center" as const, verticalAlign: "top" as const };
 const left = { textAlign: "left" as const };
 
 type Status = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string; sheets: number } | { kind: "error"; message: string };
@@ -85,7 +85,7 @@ export default function BomPage() {
                 {items.map((i, n) => (
                   <tr key={i.key}>
                     <td style={td}>{n + 1}</td><td style={{ ...td, ...left }}>{i.type}</td>
-                    <td style={td}>{i.breaker || "(review)"}</td><td style={td} />
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{i.breaker || "(review)"}</td><td style={td} />
                     <td style={td}>{i.kw ?? ""}</td><td style={td}>{i.count}</td>
                     <td style={{ ...td, ...left, minWidth: 260 }}>{i.noSheet ? "No BOM sheet required" : i.sheets.map((s) => s.trim()).join("; ") || "(none)"}</td>
                     <td style={{ ...td, ...left, minWidth: 320, fontSize: 13, ...(i.action ? { background: "#FF0000", color: "#fff", fontWeight: "bold" } : {}) }}>{i.action ?? ""}</td>
