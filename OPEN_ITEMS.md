@@ -6,7 +6,7 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 |---|------|-------|
 | 1 | Coordination of IMCC incomer ratings and PMCC outgoing feeder ratings. Both PMCC feeders carry the whole IMCC working current; the incomer ACB size is the user's choice (630 / 800 / 1000 / 1250 A). | Open |
 | 2 | Applicable breaker-sizing standards and design margins (1.25 multiplier, ladder, 630 A / ACB threshold). | Open |
-| 3 | Panel interpretation: one bus, all loads on it; Incomer 1 normal, Incomer 2 and the bus coupler (side by side at the other end) take over the whole IMCC when Incomer 1 is unhealthy. Confirm, and what the coupler's position at the end means electrically. Loads are filled into IMCCs in list order. | Open |
+| 3 | Panel interpretation: one bus, all loads on it; Incomer 1 normal, Incomer 2 and the bus coupler (side by side at the other end) take over the whole IMCC when Incomer 1 is unhealthy; all three have the same rating. Loads are filled into IMCCs in list order. | Confirmed |
 | 4 | Validation of the incomer sizing algorithm: IMCC design current = sum of working currents x 1.25; limit = ACB size x maximum loading (90 %, adjustable) on that design current. Confirm the 1.25 and the 90 % are not both a margin on the same current. | Open |
 | 5 | Duty/standby group validation (only a warning for a group with standby but no working load). | Open |
 | 6 | Final Excel output format (one workbook: Summary, one sheet per IMCC, Notes). The PMCC workbook is the existing one; with the switch ON the list it is built from has the incomer rows added. | Open |
