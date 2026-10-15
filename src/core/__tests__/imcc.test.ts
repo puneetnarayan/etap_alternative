@@ -232,7 +232,8 @@ describe("Excel output", () => {
     L("Screen", "W", "VFD", { kw: 55 }), L("Pump", "w", "DOL", { kw: 30 }), L("Spare pump", "Spare", "DOL", { kw: 30 }), L("Stby pump", "S", "SS", { kw: 30 }),
     ...Array.from({ length: 4 }, (_, n) => fdr(n + 1)),
   ];
-  it("Summary, one sheet per IMCC and Notes; spare as SP; section totals as formulas; Incomer 2 and coupler equal Incomer 1; linked text follows the switch", async () => {
+  const argbOf = (c: ExcelJS.Cell) => (c.fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
+  it("Summary, one sheet per IMCC and Notes; bus layout in order with the app's colours; spare as SP; totals as formulas; Incomer 2 and coupler equal Incomer 1", async () => {
     const set = designImccs(loads());
     for (const linked of [true, false]) {
       const wb = new ExcelJS.Workbook();
@@ -242,17 +243,28 @@ describe("Excel output", () => {
       const texts: string[] = [];
       ws.eachRow((r) => r.eachCell((c) => { if (typeof c.value === "string") texts.push(c.value); }));
       expect(texts.some((t) => t.includes(linked ? 'PMCC outgoing feeder "IMCC-01 Incomer 1"' : "switch OFF"))).toBe(true);
+      // order along the bus: INC 1, loads, BC, loads, INC 2
+      const marks: string[] = [];
+      ws.eachRow((r) => { const v = r.getCell(1).value; if (v === "INC 1" || v === "BC" || v === "INC 2") marks.push(String(v)); });
+      expect(marks).toEqual(["INC 1", "BC", "INC 2"]);
+      const rowOf = (m: string) => { let n = 0; ws.eachRow((r) => { if (r.getCell(1).value === m) n = r.number; }); return n; };
+      expect(rowOf("INC 1")).toBeLessThan(rowOf("BC"));
+      expect(rowOf("BC")).toBeLessThan(rowOf("INC 2"));
+      // colours as in the other reports
+      expect(argbOf(ws.getRow(rowOf("INC 1")).getCell(3))).toBe("FF80DEEA"); // incomer cyan
+      expect(argbOf(ws.getRow(rowOf("BC")).getCell(3))).toBe("FFFFF9C4"); // coupler light yellow
+      const fills: Record<string, string | undefined> = {};
+      ws.eachRow((r) => { const v = r.getCell(5).value; if (typeof v === "string" && ["W", "S", "SP"].includes(v)) fills[v] = argbOf(r.getCell(5)); });
+      expect(fills).toEqual({ W: "FFDEB1FB", S: "FFFBB1DE", SP: "FFFFD966" });
+      const sums: string[] = [];
+      ws.eachRow((r) => { const v = r.getCell(11).value as { formula?: string } | null; if (r.number > 17 && v && typeof v === "object" && v.formula?.startsWith("SUM(")) sums.push(String(r.getCell(1).value)); });
+      expect(sums).toEqual(["INC 1", "INC 2"]);
+      const ratingA = [rowOf("INC 1"), rowOf("BC"), rowOf("INC 2")].map((r) => ws.getRow(r).getCell(17).value);
+      expect(new Set(ratingA).size).toBe(1);
+      expect(ratingA[0]).toBe(set.imccs[0].incomer1.ratingA);
       const status: string[] = [];
-      ws.eachRow((r) => { const v = r.getCell(5).value; if (typeof v === "string" && v.length <= 2) status.push(v); });
-      expect(status.filter((s) => s === "SP")).toHaveLength(1);
-      expect(status.filter((s) => s === "S")).toHaveLength(1);
-      const ratings: string[] = [];
-      ws.eachRow((r) => { const k = r.getCell(2).value; if (k === "Incomer 1" || k === "Incomer 2" || k === "Bus coupler") ratings.push(String(r.getCell(14).value)); });
-      expect(ratings).toHaveLength(3);
-      expect(new Set(ratings).size).toBe(1);
-      let sums = 0;
-      ws.eachRow((r) => { const v = r.getCell(11).value as { formula?: string } | null; if (v && typeof v === "object" && v.formula?.startsWith("SUM(")) sums++; });
-      expect(sums).toBe(2);
+      ws.eachRow((r) => { const v = r.getCell(5).value; if (typeof v === "string" && v.length <= 2 && r.number > 19) status.push(v); });
+      expect(status.filter((x) => x === "SP")).toHaveLength(1);
     }
   });
 });

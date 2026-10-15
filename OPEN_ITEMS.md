@@ -13,7 +13,7 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 | 7 | Verification of the ECR-9 / ECR-10 reference data: many rows have no W/S/Spare status (ECR-10 rows 7 to 17 and 40 to 44; ECR-9 I/C, B/C rows and the 1-ph feeders). The reference uses 415 V and 1.73; the app uses 433 V and √3. | Open |
 | 8 | Meaning and applicability of the LCE calculation (working kVA x 0.8). Reported, not used. | Open |
 | 9 | Electrical calculation and regression testing against an independent calculation. | Open |
-| 10 | With the switch ON the standby incomer (Incomer 2) feeder is counted at 100 % in the transformer sizing, as every standby load is. PMCC parsing of `Spare` / `SP` is unchanged (not recognised there). | Open |
+| 10 | The standby incomer (Incomer 2) feeder is counted at 100 % in the transformer sizing, for sizing only, as every standby load is. PMCC parsing of `Spare` / `SP` is unchanged (not recognised there). | Confirmed (sizing only) |
 | 11 | Carried over: BOM Class column logic; soft-starter rule (225 kW or 315 kW); which "yellow cells" need technical review. | Open |
-| 12 | Soft starter (SS) is calculated like a DOL motor (pf 0.7, efficiency 0.93). Confirm, and whether a soft starter needs its own pf, efficiency or starting current. | Open |
-| 13 | 1000 A incomer limit is applied to design current (working current x 1.25), so the incomer breaker never exceeds 1000 A. Confirm. | Open |
+| 12 | Soft starter (SS) is calculated like a DOL motor (pf 0.7, efficiency 0.93). | Confirmed |
+| 13 | The 1000 A incomer limit applies to design current (working current x 1.25); 1000 A is the maximum ACB size for an IMCC incomer. | Confirmed |

@@ -29,9 +29,14 @@ Exactly one incomer ON at a time; the other incomer and the bus coupler OFF (`va
 
 One row per incomer that has a working load: description `IMCC-01 Incomer 1`, Type Feeder, Amps = the section's working current, 433 V. **Incomer 1 = W, Incomer 2 = S** (alternative sources, never added together as demand) and both carry the IMCC tag as **group**, so the transformer sizing places them on different transformer sections (its existing duty/standby group rule). The feeder is sized from the section's own current, not from the incomer breaker rating (the MCC tab then selects its breaker with the usual rules).
 
-## Excel (`Download Excel (all IMCCs)`)
+## Output design (display and Excel)
 
-One workbook, same look as the other workbooks of the application: **Summary** (IMCCs, ratings, checks, the generated PMCC feeders when the switch is ON), one sheet per IMCC in the ECR layout (S. NO., description, kW, current, W/S/SP, method, group, current, kVA, working kVA, working current, LCE kVA, design current, breaker, notes; formulas, section totals, incomer / coupler ratings; spare rows kept and shown as `SP`), and **Notes** (the assumptions the formulas read). Each incomer banner says whether it is supplied from a generated PMCC outgoing feeder (switch ON) or not linked (OFF). The formulas were checked against a LibreOffice recalculation.
+Both show each IMCC in **bus order, as the transformer report does**: Incomer 1 (cyan) | its loads | Bus coupler (light yellow) | the loads of section 2 | Incomer 2 (cyan). Colours are those of the other reports: light-orange headers, W lavender, S pink, spare (SP) gold, DOL / SS, VFD and Feeder pastels, loading green when within and red when over 100 % of the rating.
+
+- **Loading block** at the top of each IMCC: Incomer 1, Incomer 2, bus coupler with normal state (ON / OFF), working kVA and A, design A, calculated rating and **loading % of the rating** (Incomer 2 is loaded against Incomer 1's rating, which it follows).
+- **Bus layout** below: the incomer rows carry the section totals; the loads show method, W/S/SP, kW, current, kVA, working kVA / A, design A and breaker.
+- **Excel** (`Download Excel (all IMCCs)`): Summary (IMCCs, ratings, loading %, checks, the generated PMCC feeders when the switch is ON), one sheet per IMCC (loading block, colour legend, bus layout, formulas for currents, kVA and totals, conditional red when over 100 %), and Notes (assumptions the formulas read). Spare rows are kept and shown as `SP`. The formulas were checked against a LibreOffice recalculation.
+- On screen the loading rows can be collapsed; the operating-state buttons check a state against the rule.
 
 ## Import (`parseImccSheet`)
 

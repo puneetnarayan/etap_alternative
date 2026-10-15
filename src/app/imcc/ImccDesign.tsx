@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import readExcelFile from "read-excel-file/universal";
 import {
-  DEFAULT_MCC_ASSUMPTIONS, MAX_INCOMER_A, NORMAL_STATE, REPORT_COLORS, breakerLabel, designImccs, fmtInt, imccFeederRows, parseImccSheet,
-  validateOperatingState, type ImccLoad, type OperatingState, type SwitchState,
+  DEFAULT_MCC_ASSUMPTIONS, MAX_INCOMER_A, NORMAL_STATE, REPORT_COLORS, breakerLabel, designImccs, fmtInt, fmtPct, imccFeederRows, kindColor, loadTypeOf,
+  parseImccSheet, validateOperatingState, type ImccDesign, type ImccLoad, type OperatingState, type SectionResult, type SwitchState,
 } from "@/core";
 import { useShell } from "../AppShell";
 
@@ -113,51 +113,9 @@ export default function ImccDesign() {
               {all.length > 10 && <li>… and {all.length - 10} more.</li>}
             </ul>
           )}
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={th} rowSpan={2}>IMCC</th><th style={th} rowSpan={2}>Section</th><th style={th} colSpan={3}>Loads</th>
-                  <th style={th} rowSpan={2}>Working kVA</th><th style={th} rowSpan={2}>Working A</th><th style={th} rowSpan={2}>Design A</th><th style={th} rowSpan={2}>Rating</th><th style={th} rowSpan={2}>Operating state</th>
-                </tr>
-                <tr><th style={th}>W</th><th style={th}>S</th><th style={th}>SP</th></tr>
-              </thead>
-              <tbody>
-                {design.imccs.flatMap((i) => i.sections.map((s) => {
-                  const st = states[i.tag] ?? NORMAL_STATE;
-                  const v = validateOperatingState(st);
-                  const over = s.designA > design.maxIncomerA + 1e-9;
-                  return (
-                    <tr key={`${i.tag}-${s.section}`}>
-                      {s.section === 1 && <td style={{ ...td, fontWeight: "bold" }} rowSpan={2}>{i.tag}</td>}
-                      <td style={td}>Incomer {s.section}</td><td style={td}>{s.working}</td><td style={td}>{s.standby}</td><td style={td}>{s.spare}</td>
-                      <td style={td}>{fmtInt(s.workingKva)}</td><td style={td}>{fmtInt(s.workingA)}</td>
-                      <td style={{ ...td, background: over ? REPORT_COLORS.over : REPORT_COLORS.within, color: "#000" }}>{fmtInt(s.designA)}</td>
-                      <td style={td}>{s.section === 1 ? (s.workingA > 0 ? breakerLabel(s.breaker) : "") : `= Incomer 1 (${i.incomer2.ratingA ? breakerLabel(i.incomer2) : "-"})`}</td>
-                      {s.section === 1 && (
-                        <td style={{ ...td, ...left, fontSize: 12 }} rowSpan={2}>
-                          {(["incomer1", "incomer2", "coupler"] as const).map((k) => (
-                            <button key={k} type="button" style={{ marginRight: 3 }} onClick={() => setStates((x) => ({ ...x, [i.tag]: { ...st, [k]: toggle(st[k]) } }))}>
-                              {k === "coupler" ? "Coupler" : k === "incomer1" ? "Inc 1" : "Inc 2"} {st[k]}
-                            </button>
-                          ))}
-                          <div style={{ background: v.ok ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000", padding: "1px 4px", marginTop: 2, maxWidth: 360 }}>
-                            {v.ok ? "Valid: one incomer ON, other incomer and coupler OFF." : v.errors.join(" ")}
-                          </div>
-                          <div style={{ marginTop: 2 }}>Bus coupler: {breakerLabel(i.coupler)} (= Incomer 1)</div>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                }))}
-              </tbody>
-            </table>
-          </div>
-          {design.imccs.some((i) => i.issues.length > 0) && (
-            <ul style={{ margin: "4px 0", fontSize: 13 }}>
-              {design.imccs.flatMap((i) => i.issues.map((x) => `${i.tag}: ${x.message}`)).slice(0, 12).map((m, n) => <li key={n}>{m}</li>)}
-            </ul>
-          )}
+          {design.imccs.map((i) => (
+            <Board key={i.tag} imcc={i} maxA={design.maxIncomerA} state={states[i.tag] ?? NORMAL_STATE} onToggle={(k) => setStates((x) => ({ ...x, [i.tag]: { ...(x[i.tag] ?? NORMAL_STATE), [k]: toggle((x[i.tag] ?? NORMAL_STATE)[k]) } }))} />
+          ))}
 
           <h3>PMCC outgoing feeders generated for the incomers</h3>
           <p style={{ fontSize: 13, margin: "2px 0" }}>
@@ -175,5 +133,90 @@ export default function ImccDesign() {
         </section>
       )}
     </div>
+  );
+}
+
+/* ------------------------------ the IMCC board ----------------------------- */
+
+const pct = (a: number, rating: number | undefined) => (rating ? a / rating : undefined);
+const loadCell = (v: number | undefined) => ({ ...td, ...(v === undefined ? {} : { background: v > 1 + 1e-9 ? REPORT_COLORS.over : REPORT_COLORS.within, color: "#000" }) });
+const bar = (bg: string) => ({ ...td, background: bg, color: "#000", fontWeight: "bold" as const });
+
+/**
+ * One IMCC in bus order, as in the transformer report: Incomer 1 (cyan) | its loads | Bus coupler (light yellow) | the
+ * loads of section 2 | Incomer 2 (cyan). W lavender, S pink, spare gold, DOL / VFD / Feeder pastels, loading green / red.
+ */
+function Board({ imcc, maxA, state, onToggle }: { imcc: ImccDesign; maxA: number; state: OperatingState; onToggle: (k: keyof OperatingState) => void }) {
+  const [s1, s2] = imcc.sections;
+  const v = validateOperatingState(state);
+  const rating = imcc.incomer1.ratingA;
+  const l1 = pct(s1.designA, rating), l2 = pct(s2.designA, rating);
+  const toggleBtn = (k: keyof OperatingState, label: string) => (
+    <button key={k} type="button" style={{ marginRight: 3 }} onClick={() => onToggle(k)}>{label}: {state[k]}</button>
+  );
+  const inc = (n: 1 | 2, sec: SectionResult) => (
+    <tr key={`inc${n}`}>
+      <td style={bar(REPORT_COLORS.incomer)}>Incomer {n}</td>
+      <td style={{ ...bar(REPORT_COLORS.incomer), ...left }} colSpan={5}>
+        {imcc.tag} Incomer {n}: {n === 1 ? "calculated from its section's working load" : "design rating = Incomer 1"} · normally {n === 1 ? "ON" : "OFF"}
+      </td>
+      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.workingKva)}</td><td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.workingA)}</td>
+      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.designA)}</td>
+      <td style={bar(REPORT_COLORS.incomer)}>{(n === 1 ? sec.workingA > 0 : true) && imcc.incomer1.ratingA ? breakerLabel(n === 1 ? imcc.incomer1 : imcc.incomer2) : ""}</td>
+    </tr>
+  );
+  const rowsOf = (sec: SectionResult) => sec.loads.map((x) => {
+    const st = x.load.status;
+    const typeLabel = loadTypeOf(x.load.method) === "FEEDER" ? "Feeder" : loadTypeOf(x.load.method);
+    const typeBg = x.load.method ? kindColor(typeLabel) : null;
+    return (
+      <tr key={x.load.id}>
+        <td style={td}>{x.load.sNo ?? ""}</td><td style={{ ...td, ...left }}>{x.load.description}</td>
+        <td style={{ ...td, ...(typeBg ? { background: typeBg, color: "#000" } : {}) }}>{x.load.method ?? ""}</td>
+        <td style={{ ...td, color: "#000", background: st === "SP" ? REPORT_COLORS.spare : st ? kindColor(st) ?? undefined : REPORT_COLORS.over }}>{st ?? "?"}</td>
+        <td style={td}>{x.load.kw ?? ""}</td><td style={td}>{x.usedA === undefined ? "" : fmtInt(x.usedA)}</td>
+        <td style={td}>{x.kva === undefined ? "" : fmtInt(x.kva)}</td><td style={td}>{x.workingKva ? fmtInt(x.workingKva) : ""}</td>
+        <td style={td}>{x.workingA ? fmtInt(x.workingA) : ""}</td><td style={td}>{x.designA === undefined ? "" : fmtInt(x.designA)}</td>
+        <td style={td}>{x.breaker ? breakerLabel(x.breaker) : ""}</td>
+      </tr>
+    );
+  });
+  return (
+    <section style={{ marginBottom: 14 }}>
+      <h3 style={{ marginBottom: 4 }}>{imcc.tag}</h3>
+      <table style={{ borderCollapse: "collapse" }}>
+        <thead><tr><th style={th}>Element</th><th style={th}>Normal state</th><th style={th}>Working kVA</th><th style={th}>Working A</th><th style={th}>Design A</th><th style={th}>Calculated rating</th><th style={th}>Loading</th></tr></thead>
+        <tbody>
+          <tr><td style={bar(REPORT_COLORS.incomer)}>Incomer 1</td><td style={td}>ON</td><td style={td}>{fmtInt(s1.workingKva)}</td><td style={td}>{fmtInt(s1.workingA)}</td><td style={td}>{fmtInt(s1.designA)}</td><td style={td}>{s1.workingA > 0 ? breakerLabel(imcc.incomer1) : ""}</td><td style={loadCell(l1)}>{l1 === undefined ? "" : fmtPct(l1 * 100)} %</td></tr>
+          <tr><td style={bar(REPORT_COLORS.incomer)}>Incomer 2</td><td style={td}>OFF</td><td style={td}>{fmtInt(s2.workingKva)}</td><td style={td}>{fmtInt(s2.workingA)}</td><td style={td}>{fmtInt(s2.designA)}</td><td style={td}>= Incomer 1 ({imcc.incomer2.ratingA ? breakerLabel(imcc.incomer2) : "-"})</td><td style={loadCell(s2.workingA > 0 ? l2 : undefined)}>{s2.workingA > 0 && l2 !== undefined ? `${fmtPct(l2 * 100)} %` : ""}</td></tr>
+          <tr><td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td><td style={td}>OFF</td><td style={td} colSpan={3} /><td style={td}>= Incomer 1 ({imcc.coupler.ratingA ? breakerLabel(imcc.coupler) : "-"})</td><td style={td} /></tr>
+        </tbody>
+      </table>
+      <p style={{ margin: "4px 0", fontSize: 13 }}>
+        Operating state: {toggleBtn("incomer1", "Incomer 1")}{toggleBtn("incomer2", "Incomer 2")}{toggleBtn("coupler", "Bus coupler")}
+        <span style={{ background: v.ok ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000", padding: "1px 6px" }}>
+          {v.ok ? "Valid: one incomer ON, the other incomer and the bus coupler OFF." : v.errors.join(" ")}
+        </span>
+        {" "}Limit {maxA} A design current per incomer.
+      </p>
+      {imcc.issues.length > 0 && <ul style={{ margin: "2px 0", fontSize: 13 }}>{imcc.issues.map((x, n) => <li key={n}>{x.message}</li>)}</ul>}
+      <details open>
+        <summary style={{ cursor: "pointer", fontSize: 13 }}>Bus layout: Incomer 1 · loads · bus coupler · loads · Incomer 2 ({s1.loads.length + s2.loads.length} rows)</summary>
+        <div style={{ overflowX: "auto", maxHeight: 480, overflowY: "auto" }}>
+          <table style={{ borderCollapse: "collapse" }}>
+            <thead><tr>
+              {["S. NO.", "Load", "Method", "W/S/SP", "kW", "Current A", "kVA", "Working kVA", "Working A", "Design A", "Breaker"].map((h) => <th key={h} style={{ ...th, position: "sticky", top: 0 }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {inc(1, s1)}
+              {rowsOf(s1)}
+              <tr><td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td><td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={9}>Between the Incomer 1 and Incomer 2 sections · normally OFF</td><td style={bar(REPORT_COLORS.coupler)}>{imcc.coupler.ratingA ? breakerLabel(imcc.coupler) : ""}</td></tr>
+              {rowsOf(s2)}
+              {inc(2, s2)}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
   );
 }
