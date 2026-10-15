@@ -10,6 +10,10 @@ Both inputs have the same layout (first sheet; header row with Description, W/S,
 - Either drop zone (sidebar, or the IMCC page) takes one or both files. If **both** are dropped together, a pop-up asks for confirmation; then each file is processed by its own logic. Two files of one kind at once are refused. Cancelling changes nothing.
 - Entered amps are used in preference to kW (as everywhere in the app). W, w = working; S = standby; Spare = spare feeder (SP); a blank or other status is flagged and the row is not counted or placed; a number that cannot be read (e.g. "-") is flagged; a row at another voltage than the IMCC's (433 V) is not placed.
 
+## Sidebar
+
+Grouped tabs: **Input files** (drop zone showing the PMCC and IMCC file names, the **Use sample files** button and links to both samples), **General** (Home), **PMCC design** (Transformer sizing, MCC Load List / Breaker Selection, BOM; blue), **IMCC design** (IMCC Design and the Automatic PMCC feeders switch; teal) and **Analysis** (Load flow). **Use sample files** loads `PMCC_sample_load_list.xlsx` and `IMCC_sample_load_list.xlsx` (no pop-up: the click is the confirmation) and opens the Transformer sizing output; the IMCC tab shows the IMCC output. Field boxes, selects and buttons use pastel colours (`src/app/globals.css`).
+
 ## Stand-alone, with one switch
 
 The IMCC design is separate from the other tabs and is linked to them only by the **Automatic PMCC feeders** switch in the sidebar (under the IMCC entry; ON by default; it blinks whether ON or OFF).

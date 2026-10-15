@@ -32,7 +32,7 @@ interface Shell {
   imccDesign: ImccDesignSet | null;
   imccError: string;
   /** Takes dropped / chosen files: a PMCC file and / or an IMCC file, identified by their names (docs/imcc.md). */
-  intake: (files: File[]) => Promise<void>;
+  intake: (files: File[], opts?: { confirmed?: boolean }) => Promise<void>;
   /** One line per file handled by the last intake. */
   intakeNotice: string;
   autoFeeders: boolean;
@@ -63,18 +63,15 @@ function download(buffer: ArrayBuffer, name: string) {
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 
-const ITEMS = [
-  { href: "/", label: "Home", icon: "🏠" },
-  { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
-] as const;
-const AFTER_MCC = [
-  { href: "/bom", label: "BOM", icon: "📋" },
-  { href: "/load-flow", label: "Load flow", icon: "⚡" },
-] as const;
-
 const IMCC_KEY = "opd:imcc:v1";
 const IMCC_LIST_KEY = "opd:imcc-list:v1";
-const IMCC_COLOR = "rgba(0, 150, 136, 0.22)"; // the IMCC tab is a different colour from the other entries
+// The IMCC tab is a different colour (teal) from the PMCC tabs (blue).
+const IMCC_IDLE = "#E3F4F1";
+const IMCC_ACTIVE = "#BFE6DF";
+const IMCC_BAR = "#009688";
+const PMCC_ACTIVE = "#D6E6F7";
+const PMCC_BAR = "#4A86C5";
+const PMCC_TABS = [{ href: "/transformers", label: "Transformer sizing", icon: "🔌" }] as const;
 
 const MCC_TIP =
   "Purpose: prepares an MCC load schedule with preliminary breaker selections (MCCB / EDO ACB) as an Excel workbook. Click to generate it from your current load list.";
@@ -134,12 +131,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  async function intake(files: File[]) {
+  async function intake(files: File[], opts: { confirmed?: boolean } = {}) {
     setLoadError(""); setIntakeNotice("");
     if (files.length === 0) return;
     const plan = planIntake(files.map((f) => f.name));
     if (plan.errors.length) { setLoadError(plan.errors.join(" ")); return; }
-    if (plan.needsConfirmation) {
+    if (plan.needsConfirmation && !opts.confirmed) {
       const ok = window.confirm(
         `Both a PMCC and an IMCC file were dropped:\n\n  PMCC: ${files[plan.pmcc!].name}\n  IMCC: ${files[plan.imcc!].name}\n\nProcess both? The PMCC file goes to the PMCC design (transformer sizing, MCC, BOM) and the IMCC file to the IMCC design.`,
       );
@@ -171,30 +168,51 @@ export default function AppShell({ children }: { children: ReactNode }) {
     }
   }
 
+  /** Loads the two sample files (PMCC and IMCC) and shows the output: the transformer sizing with the IMCC incomers (switch permitting). */
+  async function useSamples() {
+    setLoadError("");
+    try {
+      const names = ["PMCC_sample_load_list.xlsx", "IMCC_sample_load_list.xlsx"];
+      const files = await Promise.all(names.map(async (n) => {
+        const res = await fetch(`${window.location.origin}/${n}`);
+        if (!res.ok) throw new Error(`could not load ${n} (${res.status})`);
+        return new File([await res.blob()], n, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      }));
+      await intake(files, { confirmed: true }); // the click is the confirmation
+      router.push("/transformers");
+    } catch (e) {
+      setLoadError(`Could not load the sample files: ${(e as Error).message}`);
+    }
+  }
+
   const onMccClick = () => {
     router.push("/mcc-load-list");
     void generate();
   };
 
   const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders]); // eslint-disable-line react-hooks/exhaustive-deps
-  const link = (active: boolean) => ({
-    display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", borderRadius: 6, textDecoration: "none",
-    color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
-    border: "none", font: "inherit", width: "100%", textAlign: "left" as const,
+  // Sidebar tabs: pastel, with a coloured bar on the active one.
+  const tab = (active: boolean, activeBg: string, bar = "#B8AE96", idleBg = "transparent") => ({
+    display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 8, textDecoration: "none", color: "#222",
+    background: active ? activeBg : idleBg, cursor: "pointer", border: "none", borderLeft: `4px solid ${active ? bar : "transparent"}`,
+    font: "inherit", width: "100%", textAlign: "left" as const, marginBottom: 2, fontWeight: active ? 600 : 400, boxSizing: "border-box" as const,
   });
+  const heading = { fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase" as const, color: "#7a6f58", padding: "8px 6px 2px" };
 
   return (
     <ShellContext.Provider value={ctx}>
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <nav
           aria-label="Main"
-          style={{ width: open ? 220 : 48, flexShrink: 0, borderRight: "1px solid rgba(128,128,128,0.4)", padding: 8, boxSizing: "border-box" }}
+          style={{ width: open ? 236 : 52, flexShrink: 0, borderRight: "1px solid #E4DCCB", background: "#FBF8F2", padding: 8, boxSizing: "border-box" }}
         >
           <button
             type="button" aria-label={open ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
-            style={{ ...link(false), width: 36, justifyContent: "center", fontSize: 20, marginBottom: 8 }}
+            style={{ ...tab(false, "#EDE6D8"), width: 36, justifyContent: "center", fontSize: 20, marginBottom: 6 }}
           >☰</button>
+
+          {open && <div style={heading}>Input files</div>}
           <div
             role="button" tabIndex={0} title="Drop a PMCC and/or an IMCC load list (.xlsx). The file name must start with PMCC or IMCC."
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -203,8 +221,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             onClick={() => fileInput.current?.click()}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInput.current?.click(); }}
             style={{
-              border: "2px dashed #888", borderRadius: 8, padding: open ? "8px 6px" : "4px 0", textAlign: "center", cursor: "pointer",
-              fontSize: 13, marginBottom: 8, overflowWrap: "anywhere", background: dragging ? "#C6EFCE" : "transparent", color: dragging ? "#000" : "inherit",
+              border: "2px dashed #C9BC9E", borderRadius: 8, padding: open ? "8px 6px" : "4px 0", textAlign: "center", cursor: "pointer",
+              fontSize: 13, marginBottom: 6, overflowWrap: "anywhere", background: dragging ? "#D5EFDD" : "#FFFDF7", color: "#222",
             }}
           >
             {open
@@ -212,47 +230,63 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <>
                   <div>PMCC: {loadList ? <b>{loadList.fileName}</b> : "none"}</div>
                   <div>IMCC: {imccList ? <b>{imccList.fileName}</b> : "none"}</div>
-                  <div style={{ opacity: 0.8 }}>Drop or click to add or replace (name starts with PMCC or IMCC)</div>
+                  <div style={{ opacity: 0.75 }}>Drop or click to add or replace (name starts with PMCC or IMCC)</div>
                 </>
               )
               : <span aria-label="Load list upload">📂</span>}
             <input ref={fileInput} type="file" accept=".xlsx" multiple hidden onChange={(e) => { void intake(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
           </div>
-          {loadError && open && <div role="alert" style={{ color: "#c0392b", fontSize: 13, padding: "0 4px 8px" }}>{loadError}</div>}
-          {ITEMS.map((i) => (
-            <Link key={i.href} href={i.href} style={link(pathname === i.href)} title={i.label}>
+          {loadError && open && <div role="alert" style={{ color: "#b3261e", fontSize: 13, padding: "0 4px 6px" }}>{loadError}</div>}
+          <button type="button" onClick={() => void useSamples()} title="Load the PMCC and IMCC sample files and show the output" style={{ ...tab(false, "#DDEBFA"), justifyContent: "center", border: "1px solid #B9D2EE", fontSize: 13 }}>
+            <span aria-hidden>▶</span>{open && <span><b>Use sample files</b></span>}
+          </button>
+          {open && (
+            <div style={{ fontSize: 12, padding: "4px 6px 0" }}>
+              Samples:{" "}
+              <a href="/PMCC_sample_load_list.xlsx" download>PMCC</a> · <a href="/IMCC_sample_load_list.xlsx" download>IMCC</a>
+            </div>
+          )}
+
+          {open && <div style={heading}>General</div>}
+          <Link href="/" style={tab(pathname === "/", "#E6E1D6")} title="Home"><span aria-hidden>🏠</span>{open && <span>Home</span>}</Link>
+
+          {open && <div style={heading}>PMCC design</div>}
+          {PMCC_TABS.map((i) => (
+            <Link key={i.href} href={i.href} style={tab(pathname === i.href, PMCC_ACTIVE, PMCC_BAR)} title={i.label} aria-current={pathname === i.href ? "page" : undefined}>
               <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
             </Link>
           ))}
           <button
             type="button" onClick={onMccClick} title={MCC_TIP} aria-label="MCC Load List / Breaker Selection"
-            style={link(pathname === "/mcc-load-list")}
+            style={tab(pathname === "/mcc-load-list", PMCC_ACTIVE, PMCC_BAR)}
           >
             <span aria-hidden>🗄️</span>{open && <span>MCC Load List / Breaker Selection</span>}
           </button>
-          {AFTER_MCC.map((i) => (
-            <Link key={i.href} href={i.href} style={link(pathname === i.href)} title={i.label}>
-              <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
-            </Link>
-          ))}
-          <div style={{ marginTop: 6, borderTop: "1px solid rgba(128,128,128,0.4)", paddingTop: 6 }}>
-            <Link href="/imcc" style={{ ...link(pathname === "/imcc"), background: pathname === "/imcc" ? "rgba(0,150,136,0.5)" : IMCC_COLOR, borderLeft: "4px solid #009688" }} title="IMCC Design">
-              <span aria-hidden>🧩</span>{open && <span>IMCC Design</span>}
-            </Link>
-            <button
-              type="button" role="switch" aria-checked={autoFeeders} onClick={() => setAutoFeeders(!autoFeeders)}
-              title={`Automatic PMCC feeders: ${autoFeeders ? "ON" : "OFF"}. ON: each IMCC incomer becomes an outgoing feeder of the PMCC load list (transformer sizing is recalculated). OFF: the IMCC design is independent. Click to switch.`}
-              style={{ ...link(false), background: IMCC_COLOR, fontSize: 13, marginTop: 4 }}
-            >
-              <span className="blink" aria-hidden style={{ width: 14, height: 14, borderRadius: 7, flexShrink: 0, background: autoFeeders ? "#2e7d32" : "#c62828", boxShadow: `0 0 6px ${autoFeeders ? "#2e7d32" : "#c62828"}` }} />
-              {open && <span className="blink">Automatic PMCC feeders: <b>{autoFeeders ? "ON" : "OFF"}</b></span>}
-            </button>
-          </div>
+          <Link href="/bom" style={tab(pathname === "/bom", PMCC_ACTIVE, PMCC_BAR)} title="BOM" aria-current={pathname === "/bom" ? "page" : undefined}>
+            <span aria-hidden>📋</span>{open && <span>BOM</span>}
+          </Link>
+
+          {open && <div style={heading}>IMCC design</div>}
+          <Link href="/imcc" style={tab(pathname === "/imcc", IMCC_ACTIVE, IMCC_BAR, IMCC_IDLE)} title="IMCC Design" aria-current={pathname === "/imcc" ? "page" : undefined}>
+            <span aria-hidden>🧩</span>{open && <span>IMCC Design</span>}
+          </Link>
+          <button
+            type="button" role="switch" aria-checked={autoFeeders} onClick={() => setAutoFeeders(!autoFeeders)}
+            title={`Automatic PMCC feeders: ${autoFeeders ? "ON" : "OFF"}. ON: each IMCC incomer becomes an outgoing feeder of the PMCC load list (transformer sizing is recalculated). OFF: the IMCC design is independent. Click to switch.`}
+            style={{ ...tab(false, IMCC_ACTIVE, IMCC_BAR, IMCC_IDLE), fontSize: 13, marginTop: 4 }}
+          >
+            <span className="blink" aria-hidden style={{ width: 14, height: 14, borderRadius: 7, flexShrink: 0, background: autoFeeders ? "#43a047" : "#e53935", boxShadow: `0 0 6px ${autoFeeders ? "#43a047" : "#e53935"}` }} />
+            {open && <span className="blink">Automatic PMCC feeders: <b>{autoFeeders ? "ON" : "OFF"}</b></span>}
+          </button>
+
+          {open && <div style={heading}>Analysis</div>}
+          <Link href="/load-flow" style={tab(pathname === "/load-flow", "#E6E1D6")} title="Load flow"><span aria-hidden>⚡</span>{open && <span>Load flow</span>}</Link>
+
           <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px", overflowWrap: "anywhere" }}>
             {status.kind === "busy" && (open ? "Generating workbook…" : "…")}
             {status.kind === "done" && open && `✔ ${status.name} downloaded`}
             {status.kind === "no-list" && open && "No load list yet: add one at the top of this sidebar."}
-            {status.kind === "error" && open && <span role="alert" style={{ color: "#c0392b" }}>Could not generate: {status.message}</span>}
+            {status.kind === "error" && open && <span role="alert" style={{ color: "#b3261e" }}>Could not generate: {status.message}</span>}
           </div>
         </nav>
         <div style={{ flex: 1, minWidth: 0, padding: "0.75rem 1rem" }}>
