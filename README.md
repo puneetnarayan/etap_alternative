@@ -21,7 +21,7 @@ npm run dev
 
 ## Tools
 
-- **IMCC Design** (`/imcc`): PMCC and IMCC designs in one project; creating or editing an IMCC updates its incomer feeders in the PMCC lists. See `docs/imcc.md` and `OPEN_ITEMS.md`.
+- **IMCC Design** (`/imcc`): a separate tool with its own IMCC load list; the number of IMCCs follows from the working loads (incomer limit 1000 A). Linked to the rest only by the sidebar switch "Automatic PMCC feeders". See `docs/imcc.md` and `OPEN_ITEMS.md`.
 - **Transformer sizing** (`/transformers`): add an Excel load list (top of the sidebar), get the number (2 or 3) and rating of 6.6 kV transformers, the load distribution per combination, and an Excel report. Rules: `docs/transformer-sizing.md`. Sample file: `public/sample_load_list.xlsx`.
 - **MCC Load List / Breaker Selection** (`/mcc-load-list`, sidebar): builds an Excel workbook with currents and preliminary MCCB / EDO ACB selections from the load list. Rules: `docs/mcc-load-list.md`.
 - **BOM** (`/bom`, sidebar): one unit BOM per unique item (type + rating) from the load list, cloned from the unit-BOM template. Rules: `docs/bom.md`.

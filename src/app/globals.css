@@ -8,3 +8,7 @@ table { font-size: 13px; }
 fieldset { padding: 4px 10px; margin: 6px 0 !important; }
 button, input { font-size: inherit; }
 section { margin-bottom: 0.5rem; }
+
+/* Always blinking, ON or OFF (the Automatic PMCC feeders switch in the sidebar). */
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.blink { animation: blink 1.2s ease-in-out infinite; }

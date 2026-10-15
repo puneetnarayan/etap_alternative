@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readSheet } from "read-excel-file/universal";
 import { DEFAULT_MCC_ASSUMPTIONS, type MccAssumptions } from "@/core/mcc-breaker";
+import { appendFeedersToSheet, type ImccFeederRow } from "@/core";
 import { loadLoadList, saveLoadList, type StoredLoadList } from "./loadListStore";
 
 export type MccStatus =
@@ -19,8 +20,16 @@ interface Shell {
   /** Assumptions for the MCC workbook (edited on the MCC page; the sidebar click uses the same ones). */
   assumptions: MccAssumptions;
   setAssumptions: (a: MccAssumptions) => void;
-  /** The one load list of the app (uploaded in the sidebar, kept for this browser tab). */
+  /**
+   * The one load list of the app (uploaded in the sidebar, kept for this browser tab). With the "Automatic PMCC feeders"
+   * switch ON it also holds one outgoing feeder per IMCC incomer; with the switch OFF it is exactly the uploaded list.
+   */
   loadList: StoredLoadList | null;
+  /** The IMCC tab's link to the rest of the app: the incomer feeders it generates and the switch. */
+  imccFeeders: readonly ImccFeederRow[];
+  setImccFeeders: (f: readonly ImccFeederRow[]) => void;
+  autoFeeders: boolean;
+  setAutoFeeders: (on: boolean) => void;
   loadError: string;
   /** Build the MCC workbook from the load list and download it. Only called from a click. */
   generate: () => Promise<void>;
@@ -50,12 +59,14 @@ const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").r
 const ITEMS = [
   { href: "/", label: "Home", icon: "🏠" },
   { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
-  { href: "/imcc", label: "IMCC Design", icon: "🧩" },
 ] as const;
 const AFTER_MCC = [
   { href: "/bom", label: "BOM", icon: "📋" },
   { href: "/load-flow", label: "Load flow", icon: "⚡" },
 ] as const;
+
+const IMCC_KEY = "opd:imcc:v1";
+const IMCC_COLOR = "rgba(0, 150, 136, 0.22)"; // the IMCC tab is a different colour from the other entries
 
 const MCC_TIP =
   "Purpose: prepares an MCC load schedule with preliminary breaker selections (MCCB / EDO ACB) as an Excel workbook. Click to generate it from your current load list.";
@@ -65,12 +76,30 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(true);
   const [status, setStatus] = useState<MccStatus>({ kind: "idle" });
   const [assumptions, setAssumptions] = useState<MccAssumptions>(DEFAULT_MCC_ASSUMPTIONS);
-  const [loadList, setLoadList] = useState<StoredLoadList | null>(null);
+  const [rawList, setLoadList] = useState<StoredLoadList | null>(null);
+  const [imccFeeders, setImccFeedersState] = useState<readonly ImccFeederRow[]>([]);
+  const [autoFeeders, setAutoFeedersState] = useState(true); // ON by default
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   // Read after mount: the server render has no browser storage.
-  useEffect(() => { setLoadList(loadLoadList()); }, []);
+  useEffect(() => {
+    setLoadList(loadLoadList());
+    try {
+      const t = localStorage.getItem(IMCC_KEY);
+      if (t) { const v = JSON.parse(t) as { auto?: boolean; feeders?: ImccFeederRow[] }; setAutoFeedersState(v.auto !== false); setImccFeedersState(Array.isArray(v.feeders) ? v.feeders : []); }
+    } catch { /* storage unavailable: defaults */ }
+  }, []);
+  const persistImcc = (auto: boolean, feeders: readonly ImccFeederRow[]) => { try { localStorage.setItem(IMCC_KEY, JSON.stringify({ auto, feeders })); } catch { /* ignore */ } };
+  const setAutoFeeders = (on: boolean) => { setAutoFeedersState(on); persistImcc(on, imccFeeders); };
+  const setImccFeeders = useCallback((f: readonly ImccFeederRow[]) => { setImccFeedersState(f); persistImcc(autoRef.current, f); }, []);
+  const autoRef = useRef(autoFeeders);
+  autoRef.current = autoFeeders;
+  // Switch ON: the IMCC incomer feeders are rows of the load list (transformer sizing, MCC and BOM see them). OFF: nothing changes.
+  const loadList = useMemo<StoredLoadList | null>(
+    () => (rawList && autoFeeders && imccFeeders.length ? { ...rawList, sheet: appendFeedersToSheet(rawList.sheet, imccFeeders) } : rawList),
+    [rawList, autoFeeders, imccFeeders],
+  );
   const loadListRef = useRef(loadList);
   loadListRef.current = loadList;
   const assumptionsRef = useRef(assumptions);
@@ -118,7 +147,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     void generate();
   };
 
-  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError }), [status, generate, assumptions, loadList, loadError]);
+  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, setImccFeeders, autoFeeders, setAutoFeeders }), [status, generate, assumptions, loadList, loadError, imccFeeders, setImccFeeders, autoFeeders]); // eslint-disable-line react-hooks/exhaustive-deps
   const link = (active: boolean) => ({
     display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", borderRadius: 6, textDecoration: "none",
     color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
@@ -171,6 +200,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
             </Link>
           ))}
+          <div style={{ marginTop: 6, borderTop: "1px solid rgba(128,128,128,0.4)", paddingTop: 6 }}>
+            <Link href="/imcc" style={{ ...link(pathname === "/imcc"), background: pathname === "/imcc" ? "rgba(0,150,136,0.5)" : IMCC_COLOR, borderLeft: "4px solid #009688" }} title="IMCC Design">
+              <span aria-hidden>🧩</span>{open && <span>IMCC Design</span>}
+            </Link>
+            <button
+              type="button" role="switch" aria-checked={autoFeeders} onClick={() => setAutoFeeders(!autoFeeders)}
+              title={`Automatic PMCC feeders: ${autoFeeders ? "ON" : "OFF"}. ON: each IMCC incomer becomes an outgoing feeder of the PMCC load list (transformer sizing is recalculated). OFF: the IMCC design is independent. Click to switch.`}
+              style={{ ...link(false), background: IMCC_COLOR, fontSize: 13, marginTop: 4 }}
+            >
+              <span className="blink" aria-hidden style={{ width: 14, height: 14, borderRadius: 7, flexShrink: 0, background: autoFeeders ? "#2e7d32" : "#c62828", boxShadow: `0 0 6px ${autoFeeders ? "#2e7d32" : "#c62828"}` }} />
+              {open && <span className="blink">Automatic PMCC feeders: <b>{autoFeeders ? "ON" : "OFF"}</b></span>}
+            </button>
+          </div>
           <div aria-live="polite" style={{ fontSize: 13, padding: "6px 10px", overflowWrap: "anywhere" }}>
             {status.kind === "busy" && (open ? "Generating workbook…" : "…")}
             {status.kind === "done" && open && `✔ ${status.name} downloaded`}
