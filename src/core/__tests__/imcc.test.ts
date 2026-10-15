@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
+import readExcelFile from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MCC_ASSUMPTIONS, DEFAULT_RULE, DEFAULT_OPTIONS, MAX_INCOMER_A, NORMAL_STATE, appendFeedersToSheet, designImccs, imccFeederRows, loadResult, newId,
-  normalizeMethod, normalizeStatus, parseImccSheet, parseLoadSheet, sizeTransformers, validateOperatingState, type ImccLoad,
+  classifyFile, normalizeMethod, normalizeStatus, parseImccLoadList, parseLoadSheet, planIntake, sizeTransformers, validateOperatingState, type ImccLoad,
 } from "..";
 import { imccWorkbookBuffer } from "../imcc-workbook";
 
@@ -197,33 +199,88 @@ describe("the Automatic PMCC feeders switch: generated incomer feeders", () => {
   });
 });
 
-describe("importing the reference layout", () => {
+describe("the IMCC input: same layout as the PMCC load list", () => {
   const sheet = [
-    [null, "ECR-X MCC FEEDERS"],
-    [null, "S. NO.", null, null, "KW", "Current in Amps", "W/S/Spare", "Method of starting ", "KVA", "Group", "Working KVA"],
-    [null, "INCOMER- 1"],
-    [null, 1, "Linear screen - 1", null, 5.5, 8.5, "W", "VFD", 6.1, "Linear screen operation"],
-    [null, 2, "Linear screen - Spare", null, 5.5, 8.5, "Spare", "VFD"],
-    [null, 3, "Spillage pump", "Rating changed from 5.5kW to 30kW", 30, 60, "w", "SS"],
-    [null, null, null, null, null, null, null, null, 6.1],
-    [null, "INCOMER- 2"],
-    [null, 4, "Pump 2", null, 15, null, "S", "DOL"],
-    [null, 5, "1-ph 6A Feeder-1"],
+    ["Description", "W/S", "Type (RDOL/DOL/VFD/SS/Feeder)", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)", "Duty/standby group"],
+    ["Pump A", "w", "SS", 60, 30, 433, "G1"],
+    ["Pump B", "Spare", "DOL", 60, 30, 433, null],
+    ["Fan", "S", "VFD", null, 55, 433, null],
+    ["Hoist", null, "Feeder", 59.7, 30, 433, null],
+    ["Paste thickener", "W", "Feeder", "-", "-", 433, null],
+    ["Valve", "W", "RDOL", null, 2.2, 690, null],
   ];
-  it("reads statuses (W, w, Spare, S, missing), methods incl. SS, groups, notes; skips totals and incomer rows; ignores the reference's current", () => {
-    const r = parseImccSheet(sheet);
+  it("reads W/w, S, Spare, a blank status, SS / RDOL / Feeder, amps and kW, group, voltage; bad numbers are flagged", () => {
+    const r = parseImccLoadList(sheet);
     expect(r.errors).toEqual([]);
-    expect(r.incomerRows).toBe(2);
-    expect(r.loads.map((l) => [l.description, l.kw, l.status, l.method])).toEqual([
-      ["Linear screen - 1", 5.5, "W", "VFD"], ["Linear screen - Spare", 5.5, "SP", "VFD"], ["Spillage pump", 30, "W", "SS"],
-      ["Pump 2", 15, "S", "DOL"], ["1-ph 6A Feeder-1", undefined, undefined, undefined],
+    expect(r.loads.map((l) => [l.description, l.status, l.method, l.ratedA, l.kw, l.voltageV])).toEqual([
+      ["Pump A", "W", "SS", 60, 30, 433], ["Pump B", "SP", "DOL", 60, 30, 433], ["Fan", "S", "VFD", undefined, 55, 433],
+      ["Hoist", undefined, "PWR FDR", 59.7, 30, 433], ["Paste thickener", "W", "PWR FDR", undefined, undefined, 433], ["Valve", "W", "RDOL", undefined, 2.2, 690],
     ]);
-    expect(r.loads[0].group).toBe("Linear screen operation");
-    expect(r.loads[2].note).toBe("Rating changed from 5.5kW to 30kW");
-    expect(r.loads.every((l) => l.ratedA === undefined)).toBe(true);
+    expect(r.loads[0].group).toBe("G1");
+    expect(r.loads[4].badFields).toEqual(["Amps", "kW"]);
   });
-  it("reports a sheet without the expected header", () => {
-    expect(parseImccSheet([["a", "b"], [1, 2]]).errors[0]).toMatch(/S\. NO\./);
+  it("a blank status is flagged and not counted; a row at another voltage is not placed; bad numbers are reported", () => {
+    const set = designImccs(parseImccLoadList(sheet).loads);
+    const msgs = set.issues.map((x) => x.message).join(" | ");
+    expect(msgs).toMatch(/"Hoist": status missing/);
+    expect(msgs).toMatch(/"Valve": 690 V differs from the IMCC voltage 433 V/);
+    expect(msgs).toMatch(/"Paste thickener": could not read a number in Amps, kW/);
+    // entered current (60 A) is used for Pump A, in preference to kW; the paste thickener has no current
+    expect(set.imccs[0].sections[0].workingA).toBeCloseTo(60, 9);
+  });
+  it("reports a sheet without the expected columns", () => {
+    expect(parseImccLoadList([["a", "b"], [1, 2]]).errors[0]).toMatch(/Missing column/);
+  });
+});
+
+describe("the sample files served by the app", () => {
+  const read = async (name: string) => {
+    const f = readFileSync(new URL(`../../../public/${name}`, import.meta.url));
+    return (await readExcelFile(f.buffer.slice(f.byteOffset, f.byteOffset + f.byteLength) as ArrayBuffer))[0].data as unknown[][];
+  };
+  it("IMCC_sample_load_list.xlsx: 51 rows (23 w, 1 S, 11 Spare, 16 blank); design from the working loads, hand-checked", async () => {
+    const r = parseImccLoadList(await read("IMCC_sample_load_list.xlsx"));
+    expect(r.errors).toEqual([]);
+    expect(r.loads).toHaveLength(51);
+    const count = (st: string | undefined) => r.loads.filter((l) => l.status === st).length;
+    expect([count("W"), count("S"), count("SP"), count(undefined)]).toEqual([23, 1, 11, 16]);
+    const set = designImccs(r.loads);
+    // working currents (entered amps) in list order, summed independently
+    const workingA = r.loads.filter((l) => l.status === "W").map((l) => l.ratedA ?? 0);
+    expect(workingA.reduce((a, b) => a + b, 0)).toBeCloseTo(1138.7802793889566, 9);
+    // greedy fill to 1000 A of design current (x 1.25 = 800 A of working current)
+    const split: number[][] = [[]];
+    for (const a of workingA) { const cur = split[split.length - 1]; if ((cur.reduce((x, y) => x + y, 0) + a) * 1.25 > 1000 + 1e-9 && cur.length) split.push([a]); else cur.push(a); }
+    const secs = set.imccs.flatMap((i) => i.sections).filter((s) => s.working > 0);
+    expect(secs.map((s) => s.working)).toEqual(split.map((x) => x.length));
+    for (const s of secs) expect(s.designA).toBeLessThanOrEqual(1000);
+    expect(set.imccs).toHaveLength(1);
+    expect(set.issues.filter((x) => /status missing/.test(x.message))).toHaveLength(16);
+    expect(set.issues.some((x) => /Tailing Paste Thickener/.test(x.message) && /Amps, kW/.test(x.message))).toBe(true);
+  });
+  it("PMCC_sample_load_list.xlsx is read by the PMCC reader (40 rows)", async () => {
+    const p = parseLoadSheet((await read("PMCC_sample_load_list.xlsx")) as never);
+    expect(p.errors).toEqual([]);
+    expect(p.rows).toHaveLength(40);
+  });
+});
+
+describe("telling the two files apart by name", () => {
+  it("the name starts with PMCC or IMCC, any case", () => {
+    expect(["PMCC_sample.xlsx", "imcc list.xlsx", "  IMCC.xlsx", "sample_PMCC.xlsx", "load.xlsx"].map(classifyFile)).toEqual(["PMCC", "IMCC", "IMCC", null, null]);
+  });
+  it("one file: goes to its logic, no confirmation; both: both are processed after a confirmation", () => {
+    expect(planIntake(["PMCC_a.xlsx"])).toEqual({ pmcc: 0, imcc: undefined, errors: [], needsConfirmation: false });
+    expect(planIntake(["IMCC_a.xlsx"])).toEqual({ pmcc: undefined, imcc: 0, errors: [], needsConfirmation: false });
+    expect(planIntake(["IMCC_a.xlsx", "PMCC_a.xlsx"])).toEqual({ pmcc: 1, imcc: 0, errors: [], needsConfirmation: true });
+  });
+  it("a name without the prefix, a non-xlsx file or two files of one kind is refused with a message", () => {
+    expect(planIntake(["loads.xlsx"]).errors[0]).toMatch(/must start with PMCC or IMCC/);
+    expect(planIntake(["PMCC_a.csv"]).errors[0]).toMatch(/\.xlsx/);
+    expect(planIntake(["PMCC_a.xlsx", "PMCC_b.xlsx"]).errors[0]).toMatch(/More than one PMCC/);
+    const bad = planIntake(["PMCC_a.xlsx", "loads.xlsx"]);
+    expect(bad.pmcc).toBeUndefined();
+    expect(bad.needsConfirmation).toBe(false);
   });
 });
 

@@ -9,8 +9,8 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 | 3 | Bus-section mapping and load allocation. The script fills sections in list order up to 1000 A (agreed rule); the real allocation (and what a source carries if the other is lost) is not defined. | Open |
 | 4 | Validation of the incomer sizing algorithm: incomer design current = sum of the section's working currents (arithmetic) x 1.25. There was no incomer-from-loads algorithm in the app before. | Open |
 | 5 | Duty/standby group validation (only a warning for a group with standby but no working load). | Open |
-| 6 | Final Excel output format (one workbook: Summary, one sheet per IMCC in the ECR layout, Notes). The PMCC workbook is the existing one; with the switch ON the list it is built from has the incomer rows added. | Open |
-| 7 | Verification of the ECR-9 / ECR-10 reference data: many rows have no W/S/Spare status (ECR-10 rows 7 to 17 and 40 to 44; ECR-9 I/C, B/C rows and the 1-ph feeders). The reference uses 415 V and 1.73; the app uses 433 V and √3. | Open |
+| 6 | Final Excel output format (one workbook: Summary, one sheet per IMCC, Notes). The PMCC workbook is the existing one; with the switch ON the list it is built from has the incomer rows added. | Open |
+| 7 | The IMCC sample data: 16 of 51 rows have no W/S/Spare status (flagged, not counted); one row has "-" for amps and kW; the amps column is used as given (calculated at which voltage and power factor?). The ECR-9 / ECR-10 sheets were only an example. | Open |
 | 8 | Meaning and applicability of the LCE calculation (working kVA x 0.8). Reported, not used. | Open |
 | 9 | Electrical calculation and regression testing against an independent calculation. | Open |
 | 10 | The standby incomer (Incomer 2) feeder is counted at 100 % in the transformer sizing, for sizing only, as every standby load is. PMCC parsing of `Spare` / `SP` is unchanged (not recognised there). | Confirmed (sizing only) |

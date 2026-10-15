@@ -1,15 +1,23 @@
 # IMCC design
 
-Page: **IMCC Design** in the sidebar (`/imcc`, its own colour). Code: `src/core/imcc.ts` (design script, rules, feeders), `src/core/imcc-import.ts` (reads the ECR layout), `src/core/imcc-workbook.ts` (Excel), `src/app/imcc/`. Tests: `src/core/__tests__/imcc.test.ts`.
+Page: **IMCC Design** in the sidebar (`/imcc`, its own colour). Code: `src/core/imcc.ts` (design script, rules, feeders), `src/core/imcc-import.ts` (reads the IMCC list), `src/core/intake.ts` (PMCC / IMCC by file name), `src/core/imcc-workbook.ts` (Excel), `src/app/imcc/`. Tests: `src/core/__tests__/imcc.test.ts`.
+
+## Inputs: two files, identified by name
+
+Both inputs have the same layout (first sheet; header row with Description, W/S, Type (RDOL/DOL/VFD/SS/Feeder), Amps rating (A), kW rating (kW), Voltage level (V), optional Duty/standby group). Samples: `public/PMCC_sample_load_list.xlsx` and `public/IMCC_sample_load_list.xlsx` (linked from the pages).
+
+- The **file name must start with PMCC or IMCC** (any case) so the data is identified: a PMCC file goes to the PMCC design (transformer sizing, MCC, BOM), an IMCC file to the IMCC design. Any other name is refused with a message.
+- Either drop zone (sidebar, or the IMCC page) takes one or both files. If **both** are dropped together, a pop-up asks for confirmation; then each file is processed by its own logic. Two files of one kind at once are refused. Cancelling changes nothing.
+- Entered amps are used in preference to kW (as everywhere in the app). W, w = working; S = standby; Spare = spare feeder (SP); a blank or other status is flagged and the row is not counted or placed; a number that cannot be read (e.g. "-") is flagged; a row at another voltage than the IMCC's (433 V) is not placed.
 
 ## Stand-alone, with one switch
 
-The IMCC tab has **its own load list** (drop zone on the page, kept for the browser tab). It does not read the sidebar load list and changes nothing in the other tabs, except through the **Automatic PMCC feeders** switch in the sidebar (under the IMCC entry; ON by default; it blinks whether ON or OFF).
+The IMCC design is separate from the other tabs and is linked to them only by the **Automatic PMCC feeders** switch in the sidebar (under the IMCC entry; ON by default; it blinks whether ON or OFF).
 
-- **ON**: each IMCC incomer with a working load becomes an outgoing feeder row of the PMCC load list. Transformer sizing, MCC and BOM see the list with these rows added, so the transformer loading is recalculated and the number of transformers may change (the sizing page shows "+ N IMCC incomer feeders").
+- **ON**: each IMCC incomer with a working load becomes an outgoing feeder row of the PMCC load list. Transformer sizing, MCC and BOM see the list with these rows added, so the transformer loading is recalculated and the number of transformers may change (the sizing page shows "+ N IMCC incomer feeders"). With the two sample files the sizing goes from 11 to 12 x 2000 kVA.
 - **OFF**: the IMCC design is independent; the PMCC load list is exactly the uploaded file. This is not advisable: the PMCC loading then leaves out the IMCCs.
 
-The switch state and the generated feeders are kept in the browser (localStorage). The uploaded PMCC file is never modified: the rows are added on the fly (`appendFeedersToSheet`, a pure function of the uploaded sheet and the feeders, so there are no duplicates).
+The switch state is kept in the browser (localStorage), the two lists in the browser tab (sessionStorage). The uploaded PMCC file is never modified: the rows are added on the fly (`appendFeedersToSheet`, a pure function of the uploaded sheet and the feeders, so there are no duplicates).
 
 ## Design script (`designImccs`)
 
@@ -38,10 +46,6 @@ Both show each IMCC in **bus order, as the transformer report does**: Incomer 1 
 - **Excel** (`Download Excel (all IMCCs)`): Summary (IMCCs, ratings, loading %, checks, the generated PMCC feeders when the switch is ON), one sheet per IMCC (loading block, colour legend, bus layout, formulas for currents, kVA and totals, conditional red when over 100 %), and Notes (assumptions the formulas read). Spare rows are kept and shown as `SP`. The formulas were checked against a LibreOffice recalculation.
 - On screen the loading rows can be collapsed; the operating-state buttons check a state against the rule.
 
-## Import (`parseImccSheet`)
-
-Reads the ECR layout: header row with S. NO., KW, W/S/Spare, Method of starting, Group; description in the column after S. NO.; `INCOMER - 1/2` rows are ignored (the script decides the sections). The reference's own current column (415 V, 1.73) is not imported. Rows with no status are flagged, not guessed.
-
 ## Running and testing
 
-`npm run dev`, open **IMCC Design**, drop an ECR sheet; toggle the sidebar switch and watch **Transformer sizing**. `npx vitest run`, `npx tsc --noEmit`, `npx next build`.
+`npm run dev`, open **IMCC Design**, drop `IMCC_sample_load_list.xlsx` (and `PMCC_sample_load_list.xlsx`); toggle the sidebar switch and watch **Transformer sizing**. `npx vitest run`, `npx tsc --noEmit`, `npx next build`.

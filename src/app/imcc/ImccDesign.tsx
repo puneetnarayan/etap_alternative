@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import readExcelFile from "read-excel-file/universal";
+import { useRef, useState } from "react";
 import {
-  DEFAULT_MCC_ASSUMPTIONS, MAX_INCOMER_A, NORMAL_STATE, REPORT_COLORS, breakerLabel, designImccs, fmtInt, fmtPct, imccFeederRows, kindColor, loadTypeOf,
-  parseImccSheet, validateOperatingState, type ImccDesign, type ImccLoad, type OperatingState, type SectionResult, type SwitchState,
+  DEFAULT_MCC_ASSUMPTIONS, NORMAL_STATE, REPORT_COLORS, breakerLabel, fmtInt, fmtPct, kindColor, loadTypeOf, validateOperatingState, type ImccDesign, type OperatingState, type SectionResult, type SwitchState,
 } from "@/core";
 import { useShell } from "../AppShell";
 
@@ -13,54 +11,17 @@ const th = { padding: "2px 6px", border: BORDER, background: REPORT_COLORS.heade
 const td = { padding: "2px 6px", border: BORDER, textAlign: "center" as const };
 const left = { textAlign: "left" as const };
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
-const KEY = "opd:imcc-loads:v1";
-
-interface Stored { fileName: string; sheetName: string; loads: ImccLoad[] }
 
 export default function ImccDesign() {
-  const { setImccFeeders, autoFeeders } = useShell();
-  const [stored, setStored] = useState<Stored | null>(null);
-  const [sheets, setSheets] = useState<{ sheet: string; data: unknown[][] }[]>([]);
-  const [fileName, setFileName] = useState("");
-  const [sheetIdx, setSheetIdx] = useState(0);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const { autoFeeders, imccList, imccDesign: design, imccFeeders: feeders, imccError, intake, intakeNotice, loadError } = useShell();
   const [dragging, setDragging] = useState(false);
   const [states, setStates] = useState<Record<string, OperatingState>>({});
   const input = useRef<HTMLInputElement>(null);
 
-  // This tab keeps its own load list (separate from the sidebar list of the other tabs).
-  useEffect(() => { try { const t = sessionStorage.getItem(KEY); if (t) setStored(JSON.parse(t) as Stored); } catch { /* none */ } }, []);
-
-  const design = useMemo(() => (stored ? designImccs(stored.loads, DEFAULT_MCC_ASSUMPTIONS, { maxIncomerA: MAX_INCOMER_A }) : null), [stored]);
-  // The only link to the other tabs: the incomer feeders (used when the sidebar switch is ON).
-  useEffect(() => { setImccFeeders(design ? imccFeederRows(design) : []); }, [design, setImccFeeders]);
-  const feeders = useMemo(() => (design ? imccFeederRows(design) : []), [design]);
-
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
-    setError(""); setNotice("");
-    if (!/\.xlsx$/i.test(file.name)) { setError("Please use an Excel .xlsx file."); return; }
-    try {
-      const all = (await readExcelFile(await file.arrayBuffer())).map((s) => ({ sheet: s.sheet, data: s.data as unknown[][] }));
-      setSheets(all); setFileName(file.name); setSheetIdx(0);
-      if (all.length === 1) importSheet(all, 0, file.name);
-    } catch (e) { setError(`Could not read that file: ${(e as Error).message}`); }
-  }
-
-  function importSheet(all = sheets, idx = sheetIdx, name = fileName) {
-    const r = parseImccSheet(all[idx].data);
-    if (r.errors.length) { setError(r.errors.join(" ")); return; }
-    const s: Stored = { fileName: name, sheetName: all[idx].sheet.trim(), loads: r.loads };
-    setStored(s); setSheets([]); setError(""); setStates({});
-    setNotice(`Imported ${r.loads.length} rows from "${s.sheetName}".`);
-    try { sessionStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ }
-  }
-
   async function download() {
     if (!design) return;
     const { imccWorkbookBuffer } = await import("@/core/imcc-workbook");
-    const buf = await imccWorkbookBuffer(design, DEFAULT_MCC_ASSUMPTIONS, { sourceName: stored?.fileName, linked: autoFeeders });
+    const buf = await imccWorkbookBuffer(design, DEFAULT_MCC_ASSUMPTIONS, { sourceName: imccList?.fileName, linked: autoFeeders });
     const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     const a = document.createElement("a");
     a.href = url; a.download = `IMCC_design_${stamp()}.xlsx`; document.body.appendChild(a); a.click(); a.remove();
@@ -74,22 +35,18 @@ export default function ImccDesign() {
     <div>
       <div
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); void handleFile(e.dataTransfer.files[0]); }}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); void intake(Array.from(e.dataTransfer.files)); }}
         onClick={() => input.current?.click()} role="button" tabIndex={0}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }}
         style={{ border: "2px dashed #009688", borderRadius: 8, padding: "12px 16px", textAlign: "center", cursor: "pointer", background: dragging ? "#B2DFDB" : "transparent", color: dragging ? "#000" : undefined }}
       >
-        {stored ? <>IMCC load list: <b>{stored.fileName}</b> ({stored.sheetName}). Drop another file to replace it.</> : <>Drag and drop the IMCC load list (.xlsx, ECR layout) here, or click to choose a file. This list is used only by this tab.</>}
-        <input ref={input} type="file" accept=".xlsx" hidden onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
+        {imccList ? <>IMCC load list: <b>{imccList.fileName}</b>. Drop another IMCC file to replace it.</> : <>Drag and drop the IMCC load list (.xlsx) here, or click to choose a file.</>}
+        {" "}The file name must start with <b>IMCC</b> (a file starting with <b>PMCC</b> goes to the PMCC design; both can be dropped together).
+        <input ref={input} type="file" accept=".xlsx" multiple hidden onChange={(e) => { void intake(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
       </div>
-      {sheets.length > 1 && (
-        <p>
-          Sheet: <select value={sheetIdx} onChange={(e) => setSheetIdx(Number(e.target.value))}>{sheets.map((s, n) => <option key={n} value={n}>{s.sheet.trim()}</option>)}</select>{" "}
-          <button type="button" onClick={() => importSheet()}>Use this sheet</button>
-        </p>
-      )}
-      {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
-      {notice && <p aria-live="polite">{notice}</p>}
+      {(loadError || imccError) && <p role="alert" style={{ color: "crimson" }}>{loadError || imccError}</p>}
+      {intakeNotice && <p aria-live="polite">Loaded: {intakeNotice}</p>}
+      <p style={{ fontSize: 13, margin: "2px 0" }}><a href="/IMCC_sample_load_list.xlsx" download>Download a sample IMCC load list (.xlsx)</a> · <a href="/PMCC_sample_load_list.xlsx" download>sample PMCC load list (.xlsx)</a></p>
 
       <p style={{ margin: "6px 0", padding: "2px 8px", background: autoFeeders ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000" }}>
         Automatic PMCC feeders (sidebar switch): <b>{autoFeeders ? "ON" : "OFF"}</b>.{" "}

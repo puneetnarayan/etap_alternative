@@ -53,6 +53,10 @@ export interface ImccLoad {
   method?: StartMethod;
   group?: string;
   note?: string;
+  /** Voltage level of the row (V), when the list gives one. A row at another voltage than the IMCC's is not placed. */
+  voltageV?: number;
+  /** Columns whose value could not be read as a number (e.g. "-"). */
+  badFields?: string[];
 }
 
 let counter = 0;
@@ -199,7 +203,11 @@ export function designImccs(
   const maxA = opts.maxIncomerA ?? MAX_INCOMER_A;
   const voltageV = opts.voltageV ?? 433;
   const issues: ImccDesignSet["issues"] = [];
-  const valid = loads.filter((l) => l.status !== undefined);
+  for (const l of loads) {
+    if (l.voltageV !== undefined && Math.round(l.voltageV) !== Math.round(voltageV)) issues.push({ severity: "error", message: `"${l.description}": ${l.voltageV} V differs from the IMCC voltage ${voltageV} V. Not counted, not placed.` });
+    if (l.badFields?.length) issues.push({ severity: "warning", message: `"${l.description}": could not read a number in ${l.badFields.join(", ")}; ${l.badFields.length >= 2 ? "no current" : "the other value"} is used where available.` });
+  }
+  const valid = loads.filter((l) => l.status !== undefined && (l.voltageV === undefined || Math.round(l.voltageV) === Math.round(voltageV)));
   for (const l of loads) {
     if (l.status === undefined) issues.push({ severity: "error", message: `"${l.description}": status ${l.statusText ? `"${l.statusText}"` : "missing"}; use W, w, S or Spare. Not counted, not placed.` });
     else if (l.status !== "SP" && l.kw === undefined && l.ratedA === undefined) issues.push({ severity: "warning", message: `"${l.description}": no kW or current, so it carries no load in the calculation.` });

@@ -104,7 +104,7 @@ describe("current and power factor", () => {
 
 describe("the workbook", () => {
   const sample = async () => {
-    const b = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
+    const b = readFileSync(new URL("../../../public/PMCC_sample_load_list.xlsx", import.meta.url));
     return readSheet(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
   };
 

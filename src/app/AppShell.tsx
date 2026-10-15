@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readSheet } from "read-excel-file/universal";
 import { DEFAULT_MCC_ASSUMPTIONS, type MccAssumptions } from "@/core/mcc-breaker";
-import { appendFeedersToSheet, type ImccFeederRow } from "@/core";
+import { appendFeedersToSheet, designImccs, imccFeederRows, parseImccLoadList, planIntake, type ImccDesignSet, type ImccFeederRow } from "@/core";
 import { loadLoadList, saveLoadList, type StoredLoadList } from "./loadListStore";
 
 export type MccStatus =
@@ -27,7 +27,14 @@ interface Shell {
   loadList: StoredLoadList | null;
   /** The IMCC tab's link to the rest of the app: the incomer feeders it generates and the switch. */
   imccFeeders: readonly ImccFeederRow[];
-  setImccFeeders: (f: readonly ImccFeederRow[]) => void;
+  /** The IMCC load list (file name starting with IMCC) and its design; null until one is added. */
+  imccList: StoredLoadList | null;
+  imccDesign: ImccDesignSet | null;
+  imccError: string;
+  /** Takes dropped / chosen files: a PMCC file and / or an IMCC file, identified by their names (docs/imcc.md). */
+  intake: (files: File[]) => Promise<void>;
+  /** One line per file handled by the last intake. */
+  intakeNotice: string;
   autoFeeders: boolean;
   setAutoFeeders: (on: boolean) => void;
   loadError: string;
@@ -66,6 +73,7 @@ const AFTER_MCC = [
 ] as const;
 
 const IMCC_KEY = "opd:imcc:v1";
+const IMCC_LIST_KEY = "opd:imcc-list:v1";
 const IMCC_COLOR = "rgba(0, 150, 136, 0.22)"; // the IMCC tab is a different colour from the other entries
 
 const MCC_TIP =
@@ -77,7 +85,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<MccStatus>({ kind: "idle" });
   const [assumptions, setAssumptions] = useState<MccAssumptions>(DEFAULT_MCC_ASSUMPTIONS);
   const [rawList, setLoadList] = useState<StoredLoadList | null>(null);
-  const [imccFeeders, setImccFeedersState] = useState<readonly ImccFeederRow[]>([]);
+  const [imccList, setImccList] = useState<StoredLoadList | null>(null);
+  const [imccError, setImccError] = useState("");
+  const [intakeNotice, setIntakeNotice] = useState("");
   const [autoFeeders, setAutoFeedersState] = useState(true); // ON by default
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -85,16 +95,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // Read after mount: the server render has no browser storage.
   useEffect(() => {
     setLoadList(loadLoadList());
-    try {
-      const t = localStorage.getItem(IMCC_KEY);
-      if (t) { const v = JSON.parse(t) as { auto?: boolean; feeders?: ImccFeederRow[] }; setAutoFeedersState(v.auto !== false); setImccFeedersState(Array.isArray(v.feeders) ? v.feeders : []); }
-    } catch { /* storage unavailable: defaults */ }
+    try { const t = sessionStorage.getItem(IMCC_LIST_KEY); if (t) setImccList(JSON.parse(t) as StoredLoadList); } catch { /* none */ }
+    try { const t = localStorage.getItem(IMCC_KEY); if (t) setAutoFeedersState((JSON.parse(t) as { auto?: boolean }).auto !== false); } catch { /* defaults */ }
   }, []);
-  const persistImcc = (auto: boolean, feeders: readonly ImccFeederRow[]) => { try { localStorage.setItem(IMCC_KEY, JSON.stringify({ auto, feeders })); } catch { /* ignore */ } };
-  const setAutoFeeders = (on: boolean) => { setAutoFeedersState(on); persistImcc(on, imccFeeders); };
-  const setImccFeeders = useCallback((f: readonly ImccFeederRow[]) => { setImccFeedersState(f); persistImcc(autoRef.current, f); }, []);
-  const autoRef = useRef(autoFeeders);
-  autoRef.current = autoFeeders;
+  const setAutoFeeders = (on: boolean) => { setAutoFeedersState(on); try { localStorage.setItem(IMCC_KEY, JSON.stringify({ auto: on })); } catch { /* ignore */ } };
+  // The IMCC design is computed here so that a list added anywhere (sidebar or IMCC tab) is designed and linked at once.
+  const imccLoads = useMemo(() => (imccList ? parseImccLoadList(imccList.sheet) : null), [imccList]);
+  const imccDesign = useMemo<ImccDesignSet | null>(() => (imccLoads && imccLoads.errors.length === 0 ? designImccs(imccLoads.loads, assumptions) : null), [imccLoads, assumptions]);
+  const imccFeeders = useMemo<readonly ImccFeederRow[]>(() => (imccDesign ? imccFeederRows(imccDesign) : []), [imccDesign]);
+  useEffect(() => { setImccError(imccLoads?.errors.join(" ") ?? ""); }, [imccLoads]);
   // Switch ON: the IMCC incomer feeders are rows of the load list (transformer sizing, MCC and BOM see them). OFF: nothing changes.
   const loadList = useMemo<StoredLoadList | null>(
     () => (rawList && autoFeeders && imccFeeders.length ? { ...rawList, sheet: appendFeedersToSheet(rawList.sheet, imccFeeders) } : rawList),
@@ -125,20 +134,40 @@ export default function AppShell({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
-    setLoadError("");
-    if (!/\.xlsx$/i.test(file.name)) {
-      setLoadError("Please use an Excel .xlsx file.");
-      return;
+  async function intake(files: File[]) {
+    setLoadError(""); setIntakeNotice("");
+    if (files.length === 0) return;
+    const plan = planIntake(files.map((f) => f.name));
+    if (plan.errors.length) { setLoadError(plan.errors.join(" ")); return; }
+    if (plan.needsConfirmation) {
+      const ok = window.confirm(
+        `Both a PMCC and an IMCC file were dropped:\n\n  PMCC: ${files[plan.pmcc!].name}\n  IMCC: ${files[plan.imcc!].name}\n\nProcess both? The PMCC file goes to the PMCC design (transformer sizing, MCC, BOM) and the IMCC file to the IMCC design.`,
+      );
+      if (!ok) return;
     }
+    const lines: string[] = [];
     try {
-      const sheet = (await readSheet(await file.arrayBuffer())).map((r) => [...r]);
-      saveLoadList(file.name, sheet);
-      setLoadList({ fileName: file.name, sheet });
-      setStatus({ kind: "idle" });
+      if (plan.pmcc !== undefined) {
+        const f = files[plan.pmcc];
+        const sheet = (await readSheet(await f.arrayBuffer())).map((r) => [...r]);
+        saveLoadList(f.name, sheet);
+        setLoadList({ fileName: f.name, sheet });
+        setStatus({ kind: "idle" });
+        lines.push(`PMCC: ${f.name}`);
+      }
+      if (plan.imcc !== undefined) {
+        const f = files[plan.imcc];
+        const sheet = (await readSheet(await f.arrayBuffer())).map((r) => [...r]);
+        const parsed = parseImccLoadList(sheet);
+        if (parsed.errors.length) throw new Error(`IMCC file "${f.name}": ${parsed.errors.join(" ")}`);
+        setImccList({ fileName: f.name, sheet });
+        try { sessionStorage.setItem(IMCC_LIST_KEY, JSON.stringify({ fileName: f.name, sheet })); } catch { /* ignore */ }
+        lines.push(`IMCC: ${f.name}`);
+      }
+      setIntakeNotice(lines.join(" · "));
     } catch (e) {
-      setLoadError(`Could not read that file: ${(e as Error).message}`);
+      setLoadError(`Could not read the file: ${(e as Error).message}`);
+      if (lines.length) setIntakeNotice(lines.join(" · "));
     }
   }
 
@@ -147,7 +176,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     void generate();
   };
 
-  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, setImccFeeders, autoFeeders, setAutoFeeders }), [status, generate, assumptions, loadList, loadError, imccFeeders, setImccFeeders, autoFeeders]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders]); // eslint-disable-line react-hooks/exhaustive-deps
   const link = (active: boolean) => ({
     display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", borderRadius: 6, textDecoration: "none",
     color: "inherit", background: active ? "rgba(128,128,128,0.22)" : "transparent", cursor: "pointer",
@@ -167,10 +196,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
             style={{ ...link(false), width: 36, justifyContent: "center", fontSize: 20, marginBottom: 8 }}
           >☰</button>
           <div
-            role="button" tabIndex={0} title="Load list (.xlsx): used by every calculation in the app"
+            role="button" tabIndex={0} title="Drop a PMCC and/or an IMCC load list (.xlsx). The file name must start with PMCC or IMCC."
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={(e) => { e.preventDefault(); setDragging(false); void handleFile(e.dataTransfer.files[0]); }}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); void intake(Array.from(e.dataTransfer.files)); }}
             onClick={() => fileInput.current?.click()}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInput.current?.click(); }}
             style={{
@@ -179,9 +208,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
             }}
           >
             {open
-              ? (loadList ? <>Load list: <b>{loadList.fileName}</b><br />Drop or click to replace</> : <>Load list (.xlsx)<br />Drag and drop here, or click to choose</>)
+              ? (
+                <>
+                  <div>PMCC: {loadList ? <b>{loadList.fileName}</b> : "none"}</div>
+                  <div>IMCC: {imccList ? <b>{imccList.fileName}</b> : "none"}</div>
+                  <div style={{ opacity: 0.8 }}>Drop or click to add or replace (name starts with PMCC or IMCC)</div>
+                </>
+              )
               : <span aria-label="Load list upload">📂</span>}
-            <input ref={fileInput} type="file" accept=".xlsx" hidden onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
+            <input ref={fileInput} type="file" accept=".xlsx" multiple hidden onChange={(e) => { void intake(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
           </div>
           {loadError && open && <div role="alert" style={{ color: "#c0392b", fontSize: 13, padding: "0 4px 8px" }}>{loadError}</div>}
           {ITEMS.map((i) => (

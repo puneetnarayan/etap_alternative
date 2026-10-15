@@ -1,64 +1,29 @@
 /**
- * Reads an IMCC / MCC load-list sheet in the layout of the reference workbook (sheets "ECR-9 IMCC", "ECR-10 MCC"):
- * a header row with S. NO., KW, W/S/Spare, Method of starting, Group ...; the description in the column after S. NO.;
- * and rows "INCOMER - 1" / "INCOMER - 2" (ignored: the design script decides the sections). Nothing is hardcoded to those two sheets.
- *
- * The reference file's own "Current in Amps" column is a formula of kW (415 V, 1.73): it is NOT imported. The
- * application recalculates current with its own conventions (docs/imcc.md).
+ * Reads an IMCC load list. The input is the same layout as the PMCC load list (docs/imcc.md): header row with
+ * Description, W/S, Type (RDOL/DOL/VFD/SS/Feeder), Amps rating (A), kW rating (kW), Voltage level (V) and an optional
+ * Duty/standby group; first sheet only. Column reading and number parsing are the PMCC reader's (`parseLoadSheet`).
+ * W and w are working, S standby, Spare (or SP) a spare feeder; a blank or other W/S value is kept and flagged.
  */
 import { newId, normalizeMethod, normalizeStatus, type ImccLoad } from "./imcc";
+import { parseLoadSheet } from "./transformer-sizing";
 
-type Cell = unknown;
-const norm = (h: Cell) => String(h ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-const blank = (c: Cell) => c === null || c === undefined || (typeof c === "string" && c.trim() === "");
-const num = (c: Cell): number | undefined => {
-  if (typeof c === "number" && Number.isFinite(c)) return c;
-  if (typeof c === "string" && c.trim() !== "" && Number.isFinite(Number(c))) return Number(c);
-  return undefined;
-};
+export interface ImccImport { loads: ImccLoad[]; errors: string[]; warnings: string[] }
 
-export interface ImccImport { loads: ImccLoad[]; errors: string[]; warnings: string[]; incomerRows: number }
-
-export function parseImccSheet(data: readonly (readonly Cell[])[]): ImccImport {
-  const errors: string[] = [];
+export function parseImccLoadList(sheet: readonly (readonly unknown[])[]): ImccImport {
+  const parsed = parseLoadSheet(sheet as never);
+  if (parsed.errors.length) return { loads: [], errors: parsed.errors, warnings: [] };
   const warnings: string[] = [];
-  const headerIdx = data.findIndex((r) => r.some((c) => /^s\.?no\.?$/.test(norm(c)) || norm(c) === "sno"));
-  if (headerIdx < 0) return { loads: [], errors: ["No header row with \"S. NO.\" was found."], warnings, incomerRows: 0 };
-  const header = data[headerIdx];
-  const find = (test: (n: string) => boolean) => header.findIndex((h) => test(norm(h)));
-  const sNo = find((n) => n === "sno");
-  const kw = find((n) => n === "kw");
-  const status = find((n) => n.startsWith("wsspare") || n === "ws" || n.startsWith("workingstandby"));
-  const method = find((n) => n.startsWith("methodofstarting"));
-  const group = find((n) => n === "group");
-  const feederDesc = find((n) => n.startsWith("feederdisc"));
-  const desc = sNo + 1;
-  const missing = [["KW", kw], ["W/S/Spare", status], ["Method of starting", method]].filter(([, i]) => (i as number) < 0).map(([n]) => n);
-  if (missing.length) errors.push(`Missing column(s): ${missing.join(", ")}.`);
-  if (errors.length) return { loads: [], errors, warnings, incomerRows: 0 };
-  const lastLabelled = Math.max(...header.map((h, i) => (blank(h) ? -1 : i)));
-
-  const loads: ImccLoad[] = [];
-  let incomerRows = 0;
-  for (let r = headerIdx + 1; r < data.length; r++) {
-    const row = data[r];
-    const marker = row.map((c) => /^\s*incomer\s*-?\s*([12])\s*$/i.exec(String(c ?? ""))).find(Boolean);
-    if (marker) { incomerRows++; continue; }
-    const description = String(row[desc] ?? "").trim();
-    if (!description) continue; // blank line or a totals row
-    const noteParts: string[] = [];
-    for (const i of [desc + 1, feederDesc]) {
-      if (i > 0 && i !== kw && i !== status && i !== method && i !== group && typeof row[i] === "string" && String(row[i]).trim()) noteParts.push(String(row[i]).trim());
-    }
-    for (let i = lastLabelled + 1; i < row.length; i++) if (typeof row[i] === "string" && String(row[i]).trim()) noteParts.push(String(row[i]).trim());
-    const rawStatus = row[status];
-    loads.push({
-      id: newId("load"), srcRow: r + 1, sNo: blank(row[sNo]) ? undefined : String(row[sNo]), description,
-      kw: num(row[kw]), status: normalizeStatus(rawStatus), statusText: blank(rawStatus) ? undefined : String(rawStatus).trim(),
-      method: normalizeMethod(row[method]), group: group >= 0 && !blank(row[group]) ? String(row[group]).trim() : undefined,
-      note: noteParts.length ? noteParts.join("; ") : undefined,
-    });
-  }
-  if (loads.length === 0) errors.push("No load rows were found under the header.");
-  return { loads, errors, warnings, incomerRows };
+  const loads: ImccLoad[] = parsed.rows.map((r) => {
+    // parseLoadSheet reads W and S; "Spare" arrives as unrecognised text and is classified here.
+    const status = r.status ?? normalizeStatus(r.statusText);
+    return {
+      id: newId("load"), srcRow: r.rowNumber, description: r.description,
+      kw: r.kw, ratedA: r.amps, voltageV: r.voltageV,
+      status, statusText: r.status ? r.status : r.statusText,
+      method: normalizeMethod(r.type), group: r.group, badFields: r.badFields,
+      note: r.type && !normalizeMethod(r.type) ? `Type "${r.type}" not recognised` : undefined,
+    };
+  });
+  if (loads.length === 0) return { loads, errors: ["No load rows were found under the header."], warnings };
+  return { loads, errors: [], warnings };
 }

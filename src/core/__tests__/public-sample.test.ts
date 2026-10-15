@@ -11,7 +11,7 @@ import {
  * The file served at /sample_load_list.xlsx (the one users download), supplied by the project owner.
  * Expected numbers below are worked out here from the numbers in the file, not taken from the code.
  */
-const file = readFileSync(new URL("../../../public/sample_load_list.xlsx", import.meta.url));
+const file = readFileSync(new URL("../../../public/PMCC_sample_load_list.xlsx", import.meta.url));
 const buf = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 const SQ3 = Math.sqrt(3);
 
