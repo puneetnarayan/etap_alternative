@@ -51,7 +51,7 @@ Two rows per IMCC with a working load, one for each incomer: `IMCC-01 Incomer 1`
 
 ## Output design (display and Excel)
 
-Both show each IMCC in **panel order**: Incomer 1 (cyan) | the loads | Incomer 2 (cyan) and Bus coupler (light yellow) side by side. Colours are those of the other reports: light-orange headers, ON light green, OFF light red, W lavender, S pink, spare (SP) gold, DOL / SS, VFD and Feeder pastels, loading green when within and red when over the ACB maximum loading.
+Both show each IMCC in **panel order**: Incomer 1 (cyan) | the loads | Bus coupler (light yellow) above Incomer 2 (cyan). Colours are those of the other reports: light-orange headers, ON light green, OFF light red, W lavender, S pink, spare (SP) gold, DOL / SS, VFD and Feeder pastels, loading green when within and red when over the ACB maximum loading.
 
 - **Loading block** at the top of each IMCC: Incomer 1, Incomer 2, bus coupler with the state in the normal case and when Incomer 1 is unhealthy (ON green / OFF red), working kVA and A, design A, the rating and the **loading % of the rating**.
 - **Panel** below: Incomer 1 carries the totals, Incomer 2 and the bus coupler repeat them; the loads show method, W/S/SP, kW, current, kVA, working kVA / A, design A and breaker.

@@ -78,7 +78,10 @@ export default function ImccDesign() {
             </span>
             <div style={{ fontSize: 12 }}>The largest design current per IMCC is the ACB size x its maximum loading = {fmtInt(design.maxDesignA)} A (adjustable: 50 to 100 %, default 90 %). The number of IMCCs follows.</div>
           </fieldset>
-          <p><button type="button" disabled={design.imccs.length === 0} onClick={() => void download()}>Download Excel (all IMCCs)</button></p>
+          <p>
+            <button type="button" disabled={design.imccs.length === 0} onClick={() => void download()}>Download Excel (all IMCCs)</button>{" "}
+            <b>{design.imccs.length} IMCC{design.imccs.length === 1 ? "" : "s"}</b> will be calculated ({design.imccs.length * 2} PMCC incomer feeders{autoFeeders ? "" : ", not added: switch OFF"}).
+          </p>
           {all.length > 0 && (
             <ul style={{ margin: "4px 0", fontSize: 13 }}>
               {all.slice(0, 10).map((x, n) => <li key={n} style={{ color: x.severity === "error" ? "crimson" : undefined }}>{x.severity === "error" ? "Error" : "Check"}: {x.message}</li>)}
@@ -169,8 +172,8 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
         <thead><tr><th style={th}>Element</th><th style={th}>Normal</th><th style={th}>Incomer 1 unhealthy</th><th style={th}>Working kVA</th><th style={th}>Working A</th><th style={th}>Design A</th><th style={th}>Calculated rating</th><th style={th}>Loading (limit {fmtPct(imcc.loadingLimit * 100)} %)</th><th style={th}>Now</th></tr></thead>
         <tbody>
           {element("Incomer 1", REPORT_COLORS.incomer, "incomer1", "ON", "OFF")}
-          {element("Incomer 2", REPORT_COLORS.incomer, "incomer2", "OFF", "ON")}
           {element("Bus coupler", REPORT_COLORS.coupler, "coupler", "OFF", "ON")}
+          {element("Incomer 2", REPORT_COLORS.incomer, "incomer2", "OFF", "ON")}
         </tbody>
       </table>
       <p style={{ margin: "4px 0", fontSize: 13 }}>
@@ -181,7 +184,7 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
       </p>
       {imcc.issues.length > 0 && <ul style={{ margin: "2px 0", fontSize: 13 }}>{imcc.issues.map((x, n) => <li key={n}>{x.message}</li>)}</ul>}
       <details open>
-        <summary style={{ cursor: "pointer", fontSize: 13 }}>Panel: Incomer 1 · loads · Incomer 2 · bus coupler ({bus.loads.length} load rows)</summary>
+        <summary style={{ cursor: "pointer", fontSize: 13 }}>Panel: Incomer 1 · loads · bus coupler · Incomer 2 ({bus.loads.length} load rows)</summary>
         <div style={{ overflowX: "auto", maxHeight: 480, overflowY: "auto" }}>
           <table style={{ borderCollapse: "collapse" }}>
             <thead><tr>
@@ -190,13 +193,13 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
             <tbody>
               {incRow(1)}
               {bus.loads.map(row)}
-              {incRow(2)}
               <tr>
                 <td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td>
-                <td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={5}>Side by side with Incomer 2 · switched ON with it if Incomer 1 is unhealthy</td>
+                <td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={5}>Next to Incomer 2 (below it) · switched ON with it if Incomer 1 is unhealthy</td>
                 <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingKva)}</td><td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingA)}</td>
                 <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.designA)}</td><td style={bar(REPORT_COLORS.coupler)}>{rate(imcc.coupler)}</td>
               </tr>
+              {incRow(2)}
             </tbody>
           </table>
         </div>
