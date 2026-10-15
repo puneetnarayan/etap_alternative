@@ -7,7 +7,7 @@ Excel `.xlsx`, first sheet, header row required (column order does not matter):
 Description · Type (DOL / VFD / Feeder) · Amps rating · kW rating · Voltage level (433 or 690 V).
 Optional: **Working/Standby (W/S)** column (any header containing "working", "standby" or "duty", or "W/S"; values W / Working / Duty or S / Standby), shown as W or S in the results and report. Standby loads count at 100 % like working loads.
 Optional: **Duty/standby group** (any header containing "group" or "pair"): loads with the same group name are placed on different transformers' bus sections.
-Sample: `public/sample_load_list.xlsx` is the file users download from the page (supplied by the project owner; replace the file to change it). The tests for it are in `src/core/__tests__/public-sample.test.ts`. The earlier hand-built small plant is kept only as a test fixture, `src/core/__tests__/fixtures/small_plant_load_list.xlsx`.
+Sample: `public/PMCC_sample_load_list.xlsx` is the file users download from the page (supplied by the project owner; replace the file to change it). The tests for it are in `src/core/__tests__/public-sample.test.ts`. The earlier hand-built small plant is kept only as a test fixture, `src/core/__tests__/fixtures/small_plant_load_list.xlsx`.
 
 ## Voltage selection
 Radio buttons choose the voltage level: **433 V**, **690 V**, and **Both** (only when the file has loads at both levels; a level the file does not have is not offered). Before a file is loaded both levels are shown. With Both, each level gets its own result section and its own Excel report button; a new load list starts on 433 V (or 690 V if that is all the file has). The assumptions (efficiency, power factors, voltage used for amps at 433 V) are always visible and editable.

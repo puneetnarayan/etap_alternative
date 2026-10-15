@@ -8,3 +8,21 @@ table { font-size: 13px; }
 fieldset { padding: 4px 10px; margin: 6px 0 !important; }
 button, input { font-size: inherit; }
 section { margin-bottom: 0.5rem; }
+
+/* Always blinking, ON or OFF (the Automatic PMCC feeders switch in the sidebar). */
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.blink { animation: blink 1.2s ease-in-out infinite; }
+
+/* Pastel form controls: field boxes, selects and buttons. */
+input:not([type=checkbox]):not([type=radio]):not([type=file]), select, textarea {
+  background: #FFF8E1; border: 1px solid #E3D6A6; border-radius: 5px; padding: 2px 5px; color: #222;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid #BFD9F2; outline-offset: 0; background: #FFFDF2; }
+button {
+  background: #DDEBFA; color: #1f2d3d; border: 1px solid #B9D2EE; border-radius: 6px; padding: 3px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: #CBE0F5; }
+button:active:not(:disabled) { background: #BBD6F0; }
+button:disabled { background: #EDEDED; color: #8a8a8a; border-color: #DDD; cursor: not-allowed; }
+a { color: #2f6fb0; }
+fieldset { border-color: #E3D6A6 !important; background: #FFFCF2; }

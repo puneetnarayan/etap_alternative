@@ -10,7 +10,7 @@ const buf = (name: string) => {
   const b = readFileSync(new URL(name, import.meta.url));
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
 };
-const sample = () => readSheet(buf("../../../public/sample_load_list.xlsx"));
+const sample = () => readSheet(buf("../../../public/PMCC_sample_load_list.xlsx"));
 const template = () => buf("../../../public/bom/unit_bom_template.xlsx");
 
 const sheetOf = (rows: unknown[][]) => [["Description", "Type", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)"], ...rows];

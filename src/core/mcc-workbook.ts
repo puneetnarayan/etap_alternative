@@ -342,7 +342,7 @@ function buildNotes(ws: ExcelJS.Worksheet, a: MccAssumptions) {
 }
 
 /** ExcelJS writes "Unknown" as author when none is set; remove the author fields entirely. */
-function stripAuthor(bytes: Uint8Array): Uint8Array {
+export function stripAuthor(bytes: Uint8Array): Uint8Array {
   const parts = unzipSync(bytes);
   const core = parts["docProps/core.xml"];
   if (core) {

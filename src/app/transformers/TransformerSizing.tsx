@@ -72,7 +72,7 @@ function reportFileName(inputName: string, volts: number) {
 }
 
 export default function TransformerSizing() {
-  const { loadList } = useShell();
+  const { loadList, imccFeeders, autoFeeders } = useShell();
   const parsed = useMemo(() => (loadList ? parseLoadSheet(loadList.sheet) : null), [loadList]);
   const rows: RawLoadRow[] | null = parsed && parsed.errors.length === 0 ? parsed.rows : null;
   const loadError = parsed ? parsed.errors.join(" ") : "";
@@ -147,7 +147,7 @@ export default function TransformerSizing() {
   return (
     <div>
       <p>
-        {fileName ? <>Load list: <b>{fileName}</b>. To use another file, drop it at the top of the sidebar.</> : <>No load list yet: add one at the top of the sidebar (.xlsx).</>}
+        {fileName ? <>Load list: <b>{fileName}</b>{autoFeeders && imccFeeders.length > 0 ? <> + {imccFeeders.length} IMCC incomer feeders (Automatic PMCC feeders switch ON)</> : null}. To use another file, drop it at the top of the sidebar.</> : <>No load list yet: add one at the top of the sidebar (.xlsx).</>}
       </p>
       {loadError && <p role="alert" style={{ color: BAD }}>{loadError}</p>}
       <p style={{ margin: "8px 0" }}>
