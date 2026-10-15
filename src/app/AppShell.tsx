@@ -50,6 +50,7 @@ const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").r
 const ITEMS = [
   { href: "/", label: "Home", icon: "🏠" },
   { href: "/transformers", label: "Transformer sizing", icon: "🔌" },
+  { href: "/imcc", label: "IMCC Design", icon: "🧩" },
 ] as const;
 const AFTER_MCC = [
   { href: "/bom", label: "BOM", icon: "📋" },
