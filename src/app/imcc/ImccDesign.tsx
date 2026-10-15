@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_INCOMER_ACB_A, INCOMER_ACB_OPTIONS, NORMAL_STATE, REPORT_COLORS, breakerLabel, fmtInt, fmtPct, kindColor, loadTypeOf, switchToFailover, switchToNormal, validateOperatingState,
   type BusResult, type ImccDesign, type OperatingState, type SwitchState,
@@ -14,11 +14,19 @@ const left = { textAlign: "left" as const };
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 
 export default function ImccDesign() {
-  const { assumptions, autoFeeders, imccList, imccDesign: design, imccFeeders: feeders, imccError, intake, intakeNotice, loadError, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA } = useShell();
+  const { pendingDownload, clearDownload, assumptions, autoFeeders, imccList, imccDesign: design, imccFeeders: feeders, imccError, intake, intakeNotice, loadError, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA } = useShell();
   const [acbText, setAcbText] = useState(String(Math.round(acbMaxLoading * 100)));
   const [dragging, setDragging] = useState(false);
   const [states, setStates] = useState<Record<string, OperatingState>>({});
   const input = useRef<HTMLInputElement>(null);
+
+  // Clicking the IMCC Design tab in the sidebar downloads the IMCC workbook of the (already calculated) design.
+  useEffect(() => {
+    if (pendingDownload !== "imcc") return;
+    clearDownload();
+    if (design && design.imccs.length) void download();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDownload]);
 
   async function download() {
     if (!design) return;
@@ -150,7 +158,9 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
         <td style={td}>{x.load.srcRow ?? ""}</td><td style={{ ...td, ...left }}>{x.load.description}</td>
         <td style={{ ...td, ...(typeBg ? { background: typeBg, color: "#000" } : {}) }}>{x.load.method ?? ""}</td>
         <td style={{ ...td, color: "#000", background: st === "SP" ? REPORT_COLORS.spare : st ? kindColor(st) ?? undefined : REPORT_COLORS.over }}>{st ?? "?"}</td>
-        <td style={td}>{x.load.kw ?? ""}</td><td style={td}>{x.usedA === undefined ? "" : fmtInt(x.usedA)}</td>
+        <td style={td}>{x.load.kw ?? ""}</td>
+        <td style={td}>{x.enteredA === undefined ? "" : fmtInt(x.enteredA)}</td><td style={td}>{x.calculatedA === undefined ? "" : fmtInt(x.calculatedA)}</td>
+        <td style={{ ...td, fontWeight: "bold" }} title={x.enteredA !== undefined ? "Entered current is used in preference to the calculated one" : "Calculated from kW"}>{x.usedA === undefined ? "" : fmtInt(x.usedA)}</td>
         <td style={td}>{x.kva === undefined ? "" : fmtInt(x.kva)}</td><td style={td}>{x.workingKva ? fmtInt(x.workingKva) : ""}</td>
         <td style={td}>{x.workingA ? fmtInt(x.workingA) : ""}</td><td style={td}>{x.designA === undefined ? "" : fmtInt(x.designA)}</td>
         <td style={td}>{x.breaker ? breakerLabel(x.breaker) : ""}</td>
@@ -160,7 +170,7 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
   const incRow = (n: 1 | 2) => (
     <tr key={`inc${n}`}>
       <td style={bar(REPORT_COLORS.incomer)}>Incomer {n}</td>
-      <td style={{ ...bar(REPORT_COLORS.incomer), ...left }} colSpan={5}>{imcc.tag} Incomer {n} · {n === 1 ? "beginning of the panel" : "other end, next to the bus coupler"}</td>
+      <td style={{ ...bar(REPORT_COLORS.incomer), ...left }} colSpan={7}>{imcc.tag} Incomer {n} · {n === 1 ? "beginning of the panel" : "other end, next to the bus coupler"}</td>
       <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.workingKva)}</td><td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.workingA)}</td>
       <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.designA)}</td><td style={bar(REPORT_COLORS.incomer)}>{rate(n === 1 ? imcc.incomer1 : imcc.incomer2)}</td>
     </tr>
@@ -188,14 +198,14 @@ function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingSt
         <div style={{ overflowX: "auto", maxHeight: 480, overflowY: "auto" }}>
           <table style={{ borderCollapse: "collapse" }}>
             <thead><tr>
-              {["Row", "Load", "Method", "W/S/SP", "kW", "Current A", "kVA", "Working kVA", "Working A", "Design A", "Breaker"].map((h) => <th key={h} style={{ ...th, position: "sticky", top: 0 }}>{h}</th>)}
+              {["Row", "Load", "Method", "W/S/SP", "kW", "Entered A", "Calculated from kW (A)", "Used A", "kVA", "Working kVA", "Working A", "Design A", "Breaker"].map((h) => <th key={h} style={{ ...th, position: "sticky", top: 0 }}>{h}</th>)}
             </tr></thead>
             <tbody>
               {incRow(1)}
               {bus.loads.map(row)}
               <tr>
                 <td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td>
-                <td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={5}>Next to Incomer 2 (below it) · switched ON with it if Incomer 1 is unhealthy</td>
+                <td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={7}>Next to Incomer 2 (below it) · switched ON with it if Incomer 1 is unhealthy</td>
                 <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingKva)}</td><td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingA)}</td>
                 <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.designA)}</td><td style={bar(REPORT_COLORS.coupler)}>{rate(imcc.coupler)}</td>
               </tr>

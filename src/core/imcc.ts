@@ -135,6 +135,11 @@ export function switchToNormal(from: OperatingState): { state: OperatingState; s
 
 export interface LoadResult {
   load: ImccLoad;
+  /** Current entered in the list (A), if any. */
+  enteredA?: number;
+  /** Calculated from kW (A): shown beside the entered one to explain the selection. */
+  calculatedA?: number;
+  /** Entered current if given, else the calculated one. */
   usedA?: number;
   designA?: number;
   kva?: number;
@@ -216,7 +221,7 @@ export function loadResult(l: ImccLoad, voltageV: number, a: MccAssumptions = DE
   const kva = cur.usedA === undefined ? undefined : (SQ3 * calcV(voltageV, a) * cur.usedA) / 1000;
   const working = l.status === "W";
   return {
-    load: l, usedA: cur.usedA, designA: cur.designA, kva, working,
+    load: l, enteredA: l.ratedA, calculatedA: cur.calculatedA, usedA: cur.usedA, designA: cur.designA, kva, working,
     workingKva: working && kva !== undefined ? kva : 0,
     workingA: working && cur.usedA !== undefined ? cur.usedA : 0,
     breaker: cur.designA === undefined ? undefined : selectBreaker(cur.designA, { mccb630: a.mccb630 }),

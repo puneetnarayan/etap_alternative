@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { REPORT_COLORS, bomItems, mccRows, type BomItem } from "@/core";
 import { useShell } from "../AppShell";
 import type { StoredLoadList } from "../loadListStore";
@@ -15,10 +15,21 @@ type Status = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 
 export default function BomPage() {
-  const { assumptions, loadList: stored } = useShell();
+  const { assumptions, loadList: stored, pendingDownload, clearDownload } = useShell();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
-  const items = useMemo(() => (stored ? bomItems(mccRows(stored.sheet, assumptions).rows) : null), [stored, assumptions]);
+  const mcc = useMemo(() => (stored ? mccRows(stored.sheet, assumptions).rows : null), [stored, assumptions]);
+  const items = useMemo(() => (mcc ? bomItems(mcc) : null), [mcc]);
+  // The current behind each item (from its first load): entered or calculated from kW, and the design current that selected the breaker.
+  const currentOf = (i: BomItem) => mcc?.find((r) => r.rowNumber === i.rows[0])?.current;
+
+  // Clicking the BOM tab in the sidebar downloads the BOM workbook of the (already calculated) items.
+  useEffect(() => {
+    if (pendingDownload !== "bom") return;
+    clearDownload();
+    if (stored && items && items.length) void download(stored, items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDownload]);
 
   async function download(list: StoredLoadList, its: BomItem[]) {
     setStatus({ kind: "busy" });
@@ -79,14 +90,17 @@ export default function BomPage() {
             <table style={{ borderCollapse: "collapse" }}>
               <thead><tr>
                 <th style={th}>SL</th><th style={th}>Type</th><th style={th}>Breaker / rating</th><th style={th}>Class</th>
-                <th style={th}>Motor kW</th><th style={th}>Quantity</th><th style={th}>Unit-BOM sheet(s)</th><th style={th}>Action</th>
+                <th style={th}>Motor kW</th><th style={th}>Current used (A)</th><th style={th}>Calculated from kW (A)</th><th style={th}>Design current (A)</th><th style={th}>Quantity</th><th style={th}>Unit-BOM sheet(s)</th><th style={th}>Action</th>
               </tr></thead>
               <tbody>
                 {items.map((i, n) => (
                   <tr key={i.key}>
                     <td style={td}>{n + 1}</td><td style={{ ...td, ...left }}>{i.type}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{i.breaker || "(review)"}</td><td style={td} />
-                    <td style={td}>{i.kw ?? ""}</td><td style={td}>{i.count}</td>
+                    <td style={td}>{i.kw ?? ""}</td>
+                    <td style={td} title={currentOf(i)?.source}>{currentOf(i)?.usedA === undefined ? "" : Math.round(currentOf(i)!.usedA!)}</td>
+                    <td style={td}>{currentOf(i)?.calculatedA === undefined ? "" : Math.round(currentOf(i)!.calculatedA!)}</td>
+                    <td style={td}>{currentOf(i)?.designA === undefined ? "" : Math.round(currentOf(i)!.designA!)}</td><td style={td}>{i.count}</td>
                     <td style={{ ...td, ...left, minWidth: 260 }}>{i.noSheet ? "No BOM sheet required" : i.sheets.map((s) => s.trim()).join("; ") || "(none)"}</td>
                     <td style={{ ...td, ...left, minWidth: 320, fontSize: 13, ...(i.action ? { background: "#FF0000", color: "#fff", fontWeight: "bold" } : {}) }}>{i.action ?? ""}</td>
                   </tr>

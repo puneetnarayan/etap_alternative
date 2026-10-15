@@ -163,7 +163,7 @@ const VOLTAGE_MATCH_TOLERANCE = 0.01;
 function normaliseType(raw: string): LoadType | "UNKNOWN" {
   const t = raw.toUpperCase().replace(/[^A-Z]/g, "");
   if (t.includes("VFD")) return "VFD";
-  if (t.includes("DOL")) return "DOL";
+  if (t.includes("DOL") || t === "SS" || t.includes("SOFTSTARTER")) return "DOL"; // SS = soft starter, calculated like a DOL motor
   if (t.includes("FEEDER")) return "FEEDER";
   return "UNKNOWN";
 }

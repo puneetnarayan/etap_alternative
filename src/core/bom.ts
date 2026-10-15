@@ -18,6 +18,10 @@ export interface BomItem {
   /** Breaker / incomer rating (A). */
   ratingA?: number;
   kw?: number;
+  /** Current behind the item (from its first load), to explain the breaker selection: used (entered or calculated), calculated from kW, design (x multiplier). */
+  usedA?: number;
+  calculatedA?: number;
+  designA?: number;
   /** Number of loads in the list with this type + rating. */
   count: number;
   /** Rows of the load list (sheet row numbers). */
@@ -109,7 +113,7 @@ export function bomItems(rows: MccRow[]): BomItem[] {
       have.count++;
       have.rows.push(r.rowNumber);
     } else {
-      map.set(key, { ...c, key, count: 1, rows: [r.rowNumber] });
+      map.set(key, { ...c, key, count: 1, rows: [r.rowNumber], usedA: r.current.usedA, calculatedA: r.current.calculatedA, designA: r.current.designA });
     }
   }
   const order: BomType[] = ["Incomer", "Feeder", "DOL", "DOL + soft starter", "VFD", "RDOL"];

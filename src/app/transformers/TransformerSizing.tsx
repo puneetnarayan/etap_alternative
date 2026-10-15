@@ -72,7 +72,7 @@ function reportFileName(inputName: string, volts: number) {
 }
 
 export default function TransformerSizing() {
-  const { loadList, imccFeeders, autoFeeders } = useShell();
+  const { loadList, imccFeeders, autoFeeders, pendingDownload, clearDownload } = useShell();
   const parsed = useMemo(() => (loadList ? parseLoadSheet(loadList.sheet) : null), [loadList]);
   const rows: RawLoadRow[] | null = parsed && parsed.errors.length === 0 ? parsed.rows : null;
   const loadError = parsed ? parsed.errors.join(" ") : "";
@@ -129,6 +129,15 @@ export default function TransformerSizing() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, effective, opts],
   );
+
+  // Clicking the Transformer sizing tab in the sidebar downloads the Excel report of the (already calculated) result.
+  useEffect(() => {
+    if (pendingDownload !== "transformers") return;
+    clearDownload();
+    const r = runs.find((x) => x.result.loads.length > 0 && x.result.recommended) ?? runs.find((x) => x.result.loads.length > 0);
+    if (r) void makeReport(r.result, r.tx.label, fileName, rawSheet);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDownload]);
 
   async function makeReport(r: SizingResult, label: string, sourceName: string, sheet: readonly (readonly unknown[])[]) {
     setReport({ kind: "busy" });
