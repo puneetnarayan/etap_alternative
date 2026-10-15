@@ -100,10 +100,10 @@ function buildSummary(ws: ExcelJS.Worksheet, set: ImccDesignSet, o: ImccWorkbook
   for (const x of set.issues) { ws.getCell(r, 2).value = `${x.severity === "error" ? "Error" : "Check"}: ${x.message}`; ws.getCell(r, 2).font = F({ color: { argb: x.severity === "error" ? "FFC00000" : "FF7F6000" } }); r++; }
 }
 
-const COLS = 18; // A..R
+const COLS = 19; // A..S
 
 function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesignSet, o: ImccWorkbookOptions) {
-  [9, 46, 9, 12, 10, 12, 30, 11, 10, 11, 12, 10, 12, 20, 60, 12, 10, 11].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  [9, 46, 9, 12, 10, 12, 30, 11, 10, 11, 12, 10, 12, 20, 60, 12, 10, 11, 14].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   ws.getCell("A1").value = `${imcc.tag} – IMCC load list and loading`; ws.getCell("A1").font = F({ bold: true, size: 16 });
   ws.getCell("A2").value = "Preliminary engineering aid, not a substitute for approved design. Assumptions: Notes sheet."; ws.getCell("A2").font = F({ italic: true });
   const feeder = (n: 1 | 2) => (o.linked ? (imcc.bus.workingA > 0 ? `PMCC outgoing feeder "${imcc.tag} Incomer ${n}"` : "no PMCC feeder (no working load)") : "PMCC feeder not generated (Automatic PMCC feeders switch OFF)");
@@ -170,9 +170,9 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
   });
 
   // ---- panel: INC 1 | loads | BC | INC 2 ----
-  head(HEAD, ["S. NO.", "Load description", "kW", "Current entered (A)", "W / S / SP", "Method of starting", "Group", "Current (A)", "kVA",
-    "Working kVA", "Working current (A)", `LCE kVA (x ${LCE_FACTOR})`, "Design current (A)", "Calculated breaker", "Notes / feeder description", "Status as entered", "Rating (A)", "Loading (% of rating)"]);
-  ws.getRow(HEAD).height = 34;
+  head(HEAD, ["S. NO.", "Load description", "kW", "Current entered (A)", "W / S / SP", "Method of starting", "Group", "Current used (A)", "kVA",
+    "Working kVA", "Working current (A)", `LCE kVA (x ${LCE_FACTOR})`, "Design current (A)", "Calculated breaker", "Notes / feeder description", "Status as entered", "Rating (A)", "Loading (% of rating)", "Calculated from kW (A)"]);
+  ws.getRow(HEAD).height = 48;
   const totalsRow = (r: number, label: string, tag: string, st: SwitchLike, rating: Parameters<typeof breakerLabel>[0], color: string, note: string, sums: boolean) => {
     bar(r, color);
     ws.getCell(r, 1).value = tag;
@@ -235,6 +235,8 @@ function writeLoad(ws: ExcelJS.Worksheet, r: number, x: LoadResult) {
   set(15, l.note ?? "");
   set(16, l.statusText ?? "");
   set(17, null); set(18, null);
+  // For explanation: the current calculated from kW with the application's pf / efficiency / voltage, beside the entered one.
+  set(19, { formula: `IF(ISNUMBER(C${r}),C${r}*1000/(SQRT(3)*${N.volt}*${pf}*${eff}),"")` } as ExcelJS.CellValue, num0);
 }
 
 function buildNotes(ws: ExcelJS.Worksheet, set: ImccDesignSet, a: MccAssumptions) {

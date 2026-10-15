@@ -99,8 +99,8 @@ export async function buildBomWorkbook(
   index.getCell("A2").value = `Source load list: ${sourceName || "load list"}. Quantities come from the load list. Sheet layouts are those of the unit-BOM template. Preliminary: engineering approval required.`;
   index.getCell("A3").value = "Class column: logic to be given later (reminder). Red = action item, to be reviewed.";
   index.getCell("A3").font = { name: "Calibri", italic: true, size: 11 };
-  const heads = ["SL no", "Type", "Breaker / rating", "Class", "Motor kW", "Quantity", "Loads (sheet rows)", "Sheet(s) in this workbook", "Action"];
-  const widths = [7, 20, 20, 12, 10, 10, 22, 50, 70];
+  const heads = ["SL no", "Type", "Breaker / rating", "Class", "Motor kW", "Current used (A)", "Calculated from kW (A)", "Design current (A)", "Quantity", "Loads (sheet rows)", "Sheet(s) in this workbook", "Action"];
+  const widths = [7, 20, 20, 12, 10, 12, 14, 12, 10, 22, 50, 70];
   heads.forEach((h, i) => {
     const c = index.getCell(5, i + 1);
     c.value = h; c.font = { name: "Calibri", size: 11, bold: true }; c.border = BORDER;
@@ -112,18 +112,20 @@ export async function buildBomWorkbook(
   itemRows.forEach(({ item, names }, i) => {
     const r = 6 + i;
     const vals: (string | number | null)[] = [
-      i + 1, item.type, item.breaker || "(review)", null, item.kw ?? null, item.count, item.rows.join(", "),
+      i + 1, item.type, item.breaker || "(review)", null, item.kw ?? null,
+      item.usedA === undefined ? null : Math.round(item.usedA), item.calculatedA === undefined ? null : Math.round(item.calculatedA), item.designA === undefined ? null : Math.round(item.designA),
+      item.count, item.rows.join(", "),
       item.noSheet ? "No BOM sheet required" : names.join("; ") || "(none)", item.action ?? "",
     ];
     vals.forEach((v, j) => {
       const c = index.getCell(r, j + 1);
       c.value = v; c.border = BORDER;
-      c.alignment = { vertical: "top", wrapText: true, horizontal: j === 0 || j === 4 || j === 5 ? "center" : "left" };
+      c.alignment = { vertical: "top", wrapText: true, horizontal: j === 0 || (j >= 4 && j <= 8) ? "center" : "left" };
     });
     // each item's sheet name links to its sheet
-    if (names.length === 1) index.getCell(r, 8).value = { text: names[0], hyperlink: `#'${names[0]}'!A1` } as ExcelJS.CellValue;
+    if (names.length === 1) index.getCell(r, 11).value = { text: names[0], hyperlink: `#'${names[0]}'!A1` } as ExcelJS.CellValue;
     if (item.action) {
-      const a = index.getCell(r, 9);
+      const a = index.getCell(r, 12);
       a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: RED } };
       a.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     }

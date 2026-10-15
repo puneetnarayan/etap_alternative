@@ -10,6 +10,12 @@ Both inputs have the same layout (first sheet; header row with Description, W/S,
 - Either drop zone (sidebar, or the IMCC page) takes one or both files. If **both** are dropped together, a pop-up asks for confirmation; then each file is processed by its own logic. Two files of one kind at once are refused. Cancelling changes nothing.
 - Entered amps are used in preference to kW (as everywhere in the app). W, w = working; S = standby; Spare = spare feeder (SP); a blank or other status is flagged and the row is not counted or placed; a number that cannot be read (e.g. "-") is flagged; a row at another voltage than the IMCC's (433 V) is not placed.
 
+## Calculation on upload, download on tab click
+
+When the files are added, **everything is calculated at once** (transformer sizing, MCC, BOM, IMCC) and shown; nothing is downloaded. **Clicking a tab in the sidebar** (Transformer sizing, MCC Load List / Breaker Selection, BOM, IMCC Design) opens it and downloads that tab's Excel. The **Input formats** tabs (PMCC input format, IMCC input format) show the expected columns, rules and the first rows of the sample file; the sample links stay in the sidebar and on the pages.
+
+Calculated current: wherever a selection depends on a current, kW rows show the **current calculated from kW** beside the entered one and the one used (entered amps win): in the MCC results table and workbook, in the BOM table and its Index sheet (used, calculated from kW, design current) and in the IMCC panel and Excel (entered, calculated from kW, used). The PMCC type "SS" (soft starter) is read like DOL.
+
 ## Sidebar
 
 Grouped tabs: **Input files** (drop zone showing the PMCC and IMCC file names, the **Use sample files** button and links to both samples), **General** (Home), **PMCC design** (Transformer sizing, MCC Load List / Breaker Selection, BOM; blue), **IMCC design** (IMCC Design and the Automatic PMCC feeders switch; teal) and **Analysis** (Load flow). **Use sample files** loads `PMCC_sample_load_list.xlsx` and `IMCC_sample_load_list.xlsx` (no pop-up: the click is the confirmation) and opens the Transformer sizing output; the IMCC tab shows the IMCC output. Field boxes, selects and buttons use pastel colours (`src/app/globals.css`).

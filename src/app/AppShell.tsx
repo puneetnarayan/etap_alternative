@@ -8,6 +8,8 @@ import { DEFAULT_MCC_ASSUMPTIONS, type MccAssumptions } from "@/core/mcc-breaker
 import { DEFAULT_ACB_MAX_LOADING, DEFAULT_INCOMER_ACB_A, INCOMER_ACB_OPTIONS, appendFeedersToSheet, designImccs, imccFeederRows, parseImccLoadList, planIntake, type ImccDesignSet, type ImccFeederRow } from "@/core";
 import { loadLoadList, saveLoadList, type StoredLoadList } from "./loadListStore";
 
+export type TabKey = "transformers" | "bom" | "imcc";
+
 export type MccStatus =
   | { kind: "idle" }
   | { kind: "busy" }
@@ -41,6 +43,12 @@ interface Shell {
   /** The incomer ACB size chosen in the IMCC GUI (A): 630, 800, 1000 (default) or 1250. */
   incomerAcbA: number;
   setIncomerAcbA: (v: number) => void;
+  /**
+   * A click on a sidebar tab asks the page of that tab to download its Excel (the data is already calculated when the
+   * file is added). The page runs it once and clears the request.
+   */
+  pendingDownload: TabKey | null;
+  clearDownload: () => void;
   autoFeeders: boolean;
   setAutoFeeders: (on: boolean) => void;
   loadError: string;
@@ -91,6 +99,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [imccList, setImccList] = useState<StoredLoadList | null>(null);
   const [imccError, setImccError] = useState("");
   const [intakeNotice, setIntakeNotice] = useState("");
+  const [pendingDownload, setPendingDownload] = useState<TabKey | null>(null);
   const [autoFeeders, setAutoFeedersState] = useState(true); // ON by default
   const [acbMaxLoading, setAcbMaxLoadingState] = useState(DEFAULT_ACB_MAX_LOADING);
   const [incomerAcbA, setIncomerAcbState] = useState<number>(DEFAULT_INCOMER_ACB_A);
@@ -204,7 +213,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     void generate();
   };
 
-  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders, acbMaxLoading, incomerAcbA]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA, pendingDownload, clearDownload: () => setPendingDownload(null) }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders, acbMaxLoading, incomerAcbA, pendingDownload]); // eslint-disable-line react-hooks/exhaustive-deps
   // Sidebar tabs: pastel, with a coloured bar on the active one.
   const tab = (active: boolean, activeBg: string, bar = "#B8AE96", idleBg = "transparent") => ({
     display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 8, textDecoration: "none", color: "#222",
@@ -266,7 +275,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
           {open && <div style={heading}>PMCC design</div>}
           {PMCC_TABS.map((i) => (
-            <Link key={i.href} href={i.href} style={tab(pathname === i.href, PMCC_ACTIVE, PMCC_BAR)} title={i.label} aria-current={pathname === i.href ? "page" : undefined}>
+            <Link key={i.href} href={i.href} onClick={() => setPendingDownload("transformers")} style={tab(pathname === i.href, PMCC_ACTIVE, PMCC_BAR)} title={`${i.label}: click to open and download its Excel report`} aria-current={pathname === i.href ? "page" : undefined}>
               <span aria-hidden>{i.icon}</span>{open && <span>{i.label}</span>}
             </Link>
           ))}
@@ -276,12 +285,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
           >
             <span aria-hidden>🗄️</span>{open && <span>MCC Load List / Breaker Selection</span>}
           </button>
-          <Link href="/bom" style={tab(pathname === "/bom", PMCC_ACTIVE, PMCC_BAR)} title="BOM" aria-current={pathname === "/bom" ? "page" : undefined}>
+          <Link href="/bom" onClick={() => setPendingDownload("bom")} style={tab(pathname === "/bom", PMCC_ACTIVE, PMCC_BAR)} title="BOM: click to open and download its Excel" aria-current={pathname === "/bom" ? "page" : undefined}>
             <span aria-hidden>📋</span>{open && <span>BOM</span>}
           </Link>
 
           {open && <div style={heading}>IMCC design</div>}
-          <Link href="/imcc" style={tab(pathname === "/imcc", IMCC_ACTIVE, IMCC_BAR, IMCC_IDLE)} title="IMCC Design" aria-current={pathname === "/imcc" ? "page" : undefined}>
+          <Link href="/imcc" onClick={() => setPendingDownload("imcc")} style={tab(pathname === "/imcc", IMCC_ACTIVE, IMCC_BAR, IMCC_IDLE)} title="IMCC Design: click to open and download its Excel" aria-current={pathname === "/imcc" ? "page" : undefined}>
             <span aria-hidden>🧩</span>{open && <span>IMCC Design</span>}
           </Link>
           <button
@@ -292,6 +301,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <span className="blink" aria-hidden style={{ width: 14, height: 14, borderRadius: 7, flexShrink: 0, background: autoFeeders ? "#43a047" : "#e53935", boxShadow: `0 0 6px ${autoFeeders ? "#43a047" : "#e53935"}` }} />
             {open && <span className="blink">Automatic PMCC feeders: <b>{autoFeeders ? "ON" : "OFF"}</b></span>}
           </button>
+
+          {open && <div style={heading}>Input formats</div>}
+          <Link href="/format/pmcc" style={tab(pathname === "/format/pmcc", PMCC_ACTIVE, PMCC_BAR)} title="The PMCC load list format"><span aria-hidden>📄</span>{open && <span>PMCC input format</span>}</Link>
+          <Link href="/format/imcc" style={tab(pathname === "/format/imcc", IMCC_ACTIVE, IMCC_BAR, IMCC_IDLE)} title="The IMCC load list format"><span aria-hidden>📄</span>{open && <span>IMCC input format</span>}</Link>
 
           {open && <div style={heading}>Analysis</div>}
           <Link href="/load-flow" style={tab(pathname === "/load-flow", "#E6E1D6")} title="Load flow"><span aria-hidden>⚡</span>{open && <span>Load flow</span>}</Link>
