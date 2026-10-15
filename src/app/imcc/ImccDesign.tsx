@@ -2,7 +2,8 @@
 
 import { useRef, useState } from "react";
 import {
-  DEFAULT_MCC_ASSUMPTIONS, NORMAL_STATE, REPORT_COLORS, breakerLabel, fmtInt, fmtPct, kindColor, loadTypeOf, validateOperatingState, type ImccDesign, type OperatingState, type SectionResult, type SwitchState,
+  DEFAULT_INCOMER_ACB_A, INCOMER_ACB_OPTIONS, NORMAL_STATE, REPORT_COLORS, breakerLabel, fmtInt, fmtPct, kindColor, loadTypeOf, switchToFailover, switchToNormal, validateOperatingState,
+  type BusResult, type ImccDesign, type OperatingState, type SwitchState,
 } from "@/core";
 import { useShell } from "../AppShell";
 
@@ -13,7 +14,8 @@ const left = { textAlign: "left" as const };
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 
 export default function ImccDesign() {
-  const { autoFeeders, imccList, imccDesign: design, imccFeeders: feeders, imccError, intake, intakeNotice, loadError } = useShell();
+  const { assumptions, autoFeeders, imccList, imccDesign: design, imccFeeders: feeders, imccError, intake, intakeNotice, loadError, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA } = useShell();
+  const [acbText, setAcbText] = useState(String(Math.round(acbMaxLoading * 100)));
   const [dragging, setDragging] = useState(false);
   const [states, setStates] = useState<Record<string, OperatingState>>({});
   const input = useRef<HTMLInputElement>(null);
@@ -21,14 +23,13 @@ export default function ImccDesign() {
   async function download() {
     if (!design) return;
     const { imccWorkbookBuffer } = await import("@/core/imcc-workbook");
-    const buf = await imccWorkbookBuffer(design, DEFAULT_MCC_ASSUMPTIONS, { sourceName: imccList?.fileName, linked: autoFeeders });
+    const buf = await imccWorkbookBuffer(design, assumptions, { sourceName: imccList?.fileName, linked: autoFeeders });
     const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     const a = document.createElement("a");
     a.href = url; a.download = `IMCC_design_${stamp()}.xlsx`; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
-  const toggle = (s: SwitchState): SwitchState => (s === "ON" ? "OFF" : "ON");
   const all = design?.issues ?? [];
 
   return (
@@ -59,10 +60,24 @@ export default function ImccDesign() {
         <section>
           <h3>Design: {design.imccs.length} IMCC{design.imccs.length === 1 ? "" : "s"}</h3>
           <p style={{ fontSize: 13, margin: "2px 0" }}>
-            Only working (W / w) loads are used. They fill the incomers in list order, up to {design.maxIncomerA} A of design current (working current x {DEFAULT_MCC_ASSUMPTIONS.designMultiplier}) per incomer; a new
-            section starts when the next load would exceed it. Two sections (Incomer 1, Incomer 2) make one IMCC. Standby and spare rows stay with their group; they are not counted. Incomer 2 and the bus coupler follow Incomer 1.
-            SS = soft starter (calculated like DOL).
+            Only working (W / w) loads are used. They fill an IMCC in list order up to {fmtInt(design.maxDesignA)} A of design current (working current x {assumptions.designMultiplier}) = the {design.maxIncomerA} A ACB at
+            {" "}{fmtPct(design.acbMaxLoading * 100)} % maximum loading; then the next IMCC starts. Incomer 1 is at the beginning of the panel; Incomer 2 and the bus coupler are side by side at the other end, and all three have the same
+            rating because each carries the whole IMCC. Standby and spare rows stay with their group; they are not counted. SS = soft starter (calculated like DOL).
           </p>
+          <fieldset style={{ margin: "6px 0", padding: "4px 10px" }}>
+            <legend>Incomer ACB (Incomer 1, Incomer 2 and bus coupler)</legend>
+            {INCOMER_ACB_OPTIONS.map((r) => (
+              <label key={r} style={{ marginRight: 16 }}>
+                <input type="radio" name="incomer-acb" checked={incomerAcbA === r} onChange={() => setIncomerAcbA(r)} /> {r} A ACB{r === DEFAULT_INCOMER_ACB_A ? " (default)" : ""}
+              </label>
+            ))}
+            <span style={{ marginLeft: 8 }}>
+              <label>ACB maximum loading (%){" "}
+                <input style={{ width: 60 }} value={acbText} onChange={(e) => { setAcbText(e.target.value); const n = Number(e.target.value); if (e.target.value.trim() !== "" && Number.isFinite(n) && n >= 50 && n <= 100) setAcbMaxLoading(n / 100); }} />
+              </label>
+            </span>
+            <div style={{ fontSize: 12 }}>The largest design current per IMCC is the ACB size x its maximum loading = {fmtInt(design.maxDesignA)} A (adjustable: 50 to 100 %, default 90 %). The number of IMCCs follows.</div>
+          </fieldset>
           <p><button type="button" disabled={design.imccs.length === 0} onClick={() => void download()}>Download Excel (all IMCCs)</button></p>
           {all.length > 0 && (
             <ul style={{ margin: "4px 0", fontSize: 13 }}>
@@ -71,7 +86,7 @@ export default function ImccDesign() {
             </ul>
           )}
           {design.imccs.map((i) => (
-            <Board key={i.tag} imcc={i} maxA={design.maxIncomerA} state={states[i.tag] ?? NORMAL_STATE} onToggle={(k) => setStates((x) => ({ ...x, [i.tag]: { ...(x[i.tag] ?? NORMAL_STATE), [k]: toggle((x[i.tag] ?? NORMAL_STATE)[k]) } }))} />
+            <Board key={i.tag} imcc={i} state={states[i.tag] ?? NORMAL_STATE} setState={(st) => setStates((x) => ({ ...x, [i.tag]: st }))} />
           ))}
 
           <h3>PMCC outgoing feeders generated for the incomers</h3>
@@ -95,40 +110,41 @@ export default function ImccDesign() {
 
 /* ------------------------------ the IMCC board ----------------------------- */
 
-const pct = (a: number, rating: number | undefined) => (rating ? a / rating : undefined);
-const loadCell = (v: number | undefined) => ({ ...td, ...(v === undefined ? {} : { background: v > 1 + 1e-9 ? REPORT_COLORS.over : REPORT_COLORS.within, color: "#000" }) });
+const onOff = (v: SwitchState) => ({ ...td, background: v === "ON" ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000", fontWeight: "bold" as const });
 const bar = (bg: string) => ({ ...td, background: bg, color: "#000", fontWeight: "bold" as const });
+const flip = (v: SwitchState): SwitchState => (v === "ON" ? "OFF" : "ON");
 
 /**
- * One IMCC in bus order, as in the transformer report: Incomer 1 (cyan) | its loads | Bus coupler (light yellow) | the
- * loads of section 2 | Incomer 2 (cyan). W lavender, S pink, spare gold, DOL / VFD / Feeder pastels, loading green / red.
+ * One IMCC in panel order, as in the Excel: Incomer 1 (cyan) at the beginning | the loads | Incomer 2 (cyan) and the bus
+ * coupler (light yellow) side by side at the other end. ON is light green, OFF light red; W lavender, S pink, spare gold,
+ * DOL / VFD / Feeder pastels; loading green within / red over the limit.
  */
-function Board({ imcc, maxA, state, onToggle }: { imcc: ImccDesign; maxA: number; state: OperatingState; onToggle: (k: keyof OperatingState) => void }) {
-  const [s1, s2] = imcc.sections;
+function Board({ imcc, state, setState }: { imcc: ImccDesign; state: OperatingState; setState: (s: OperatingState) => void }) {
+  const bus: BusResult = imcc.bus;
   const v = validateOperatingState(state);
-  const rating = imcc.incomer1.ratingA;
-  const l1 = pct(s1.designA, rating), l2 = pct(s2.designA, rating);
-  const toggleBtn = (k: keyof OperatingState, label: string) => (
-    <button key={k} type="button" style={{ marginRight: 3 }} onClick={() => onToggle(k)}>{label}: {state[k]}</button>
-  );
-  const inc = (n: 1 | 2, sec: SectionResult) => (
-    <tr key={`inc${n}`}>
-      <td style={bar(REPORT_COLORS.incomer)}>Incomer {n}</td>
-      <td style={{ ...bar(REPORT_COLORS.incomer), ...left }} colSpan={5}>
-        {imcc.tag} Incomer {n}: {n === 1 ? "calculated from its section's working load" : "design rating = Incomer 1"} · normally {n === 1 ? "ON" : "OFF"}
+  const [steps, setSteps] = useState<string[]>([]);
+  const loadBg = (x: number | undefined) => (x === undefined ? undefined : x > imcc.loadingLimit + 1e-9 ? REPORT_COLORS.over : REPORT_COLORS.within);
+  const rate = (b: ImccDesign["incomer1"]) => (b.ratingA ? breakerLabel(b) : bus.workingA > 0 ? "(review)" : "");
+  const set = (k: keyof OperatingState) => { setSteps([]); setState({ ...state, [k]: flip(state[k]) }); };
+  const element = (label: string, color: string, k: keyof OperatingState, normal: SwitchState, fail: SwitchState) => (
+    <tr key={label}>
+      <td style={bar(color)}>{label}</td>
+      <td style={onOff(normal)}>{normal}</td><td style={onOff(fail)}>{fail}</td>
+      <td style={td}>{fmtInt(bus.workingKva)}</td><td style={td}>{fmtInt(bus.workingA)}</td><td style={td}>{fmtInt(bus.designA)}</td>
+      <td style={td}>{rate(imcc.incomer1)}</td>
+      <td style={{ ...td, background: loadBg(imcc.loading), color: "#000" }}>{imcc.loading === undefined ? "" : `${fmtPct(imcc.loading * 100)} %`}</td>
+      <td style={onOff(state[k])}>
+        <button type="button" style={{ background: "transparent", border: "none", font: "inherit", fontWeight: "bold", cursor: "pointer", padding: 0 }} title="Click to switch (checked against the interlock)" onClick={() => set(k)}>{state[k]}</button>
       </td>
-      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.workingKva)}</td><td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.workingA)}</td>
-      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(sec.designA)}</td>
-      <td style={bar(REPORT_COLORS.incomer)}>{(n === 1 ? sec.workingA > 0 : true) && imcc.incomer1.ratingA ? breakerLabel(n === 1 ? imcc.incomer1 : imcc.incomer2) : ""}</td>
     </tr>
   );
-  const rowsOf = (sec: SectionResult) => sec.loads.map((x) => {
+  const row = (x: BusResult["loads"][number]) => {
     const st = x.load.status;
     const typeLabel = loadTypeOf(x.load.method) === "FEEDER" ? "Feeder" : loadTypeOf(x.load.method);
     const typeBg = x.load.method ? kindColor(typeLabel) : null;
     return (
       <tr key={x.load.id}>
-        <td style={td}>{x.load.sNo ?? ""}</td><td style={{ ...td, ...left }}>{x.load.description}</td>
+        <td style={td}>{x.load.srcRow ?? ""}</td><td style={{ ...td, ...left }}>{x.load.description}</td>
         <td style={{ ...td, ...(typeBg ? { background: typeBg, color: "#000" } : {}) }}>{x.load.method ?? ""}</td>
         <td style={{ ...td, color: "#000", background: st === "SP" ? REPORT_COLORS.spare : st ? kindColor(st) ?? undefined : REPORT_COLORS.over }}>{st ?? "?"}</td>
         <td style={td}>{x.load.kw ?? ""}</td><td style={td}>{x.usedA === undefined ? "" : fmtInt(x.usedA)}</td>
@@ -137,39 +153,50 @@ function Board({ imcc, maxA, state, onToggle }: { imcc: ImccDesign; maxA: number
         <td style={td}>{x.breaker ? breakerLabel(x.breaker) : ""}</td>
       </tr>
     );
-  });
+  };
+  const incRow = (n: 1 | 2) => (
+    <tr key={`inc${n}`}>
+      <td style={bar(REPORT_COLORS.incomer)}>Incomer {n}</td>
+      <td style={{ ...bar(REPORT_COLORS.incomer), ...left }} colSpan={5}>{imcc.tag} Incomer {n} · {n === 1 ? "beginning of the panel" : "other end, next to the bus coupler"}</td>
+      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.workingKva)}</td><td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.workingA)}</td>
+      <td style={bar(REPORT_COLORS.incomer)}>{fmtInt(bus.designA)}</td><td style={bar(REPORT_COLORS.incomer)}>{rate(n === 1 ? imcc.incomer1 : imcc.incomer2)}</td>
+    </tr>
+  );
   return (
     <section style={{ marginBottom: 14 }}>
       <h3 style={{ marginBottom: 4 }}>{imcc.tag}</h3>
       <table style={{ borderCollapse: "collapse" }}>
-        <thead><tr><th style={th}>Element</th><th style={th}>Normal state</th><th style={th}>Working kVA</th><th style={th}>Working A</th><th style={th}>Design A</th><th style={th}>Calculated rating</th><th style={th}>Loading</th></tr></thead>
+        <thead><tr><th style={th}>Element</th><th style={th}>Normal</th><th style={th}>Incomer 1 unhealthy</th><th style={th}>Working kVA</th><th style={th}>Working A</th><th style={th}>Design A</th><th style={th}>Calculated rating</th><th style={th}>Loading (limit {fmtPct(imcc.loadingLimit * 100)} %)</th><th style={th}>Now</th></tr></thead>
         <tbody>
-          <tr><td style={bar(REPORT_COLORS.incomer)}>Incomer 1</td><td style={td}>ON</td><td style={td}>{fmtInt(s1.workingKva)}</td><td style={td}>{fmtInt(s1.workingA)}</td><td style={td}>{fmtInt(s1.designA)}</td><td style={td}>{s1.workingA > 0 ? breakerLabel(imcc.incomer1) : ""}</td><td style={loadCell(l1)}>{l1 === undefined ? "" : fmtPct(l1 * 100)} %</td></tr>
-          <tr><td style={bar(REPORT_COLORS.incomer)}>Incomer 2</td><td style={td}>OFF</td><td style={td}>{fmtInt(s2.workingKva)}</td><td style={td}>{fmtInt(s2.workingA)}</td><td style={td}>{fmtInt(s2.designA)}</td><td style={td}>= Incomer 1 ({imcc.incomer2.ratingA ? breakerLabel(imcc.incomer2) : "-"})</td><td style={loadCell(s2.workingA > 0 ? l2 : undefined)}>{s2.workingA > 0 && l2 !== undefined ? `${fmtPct(l2 * 100)} %` : ""}</td></tr>
-          <tr><td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td><td style={td}>OFF</td><td style={td} colSpan={3} /><td style={td}>= Incomer 1 ({imcc.coupler.ratingA ? breakerLabel(imcc.coupler) : "-"})</td><td style={td} /></tr>
+          {element("Incomer 1", REPORT_COLORS.incomer, "incomer1", "ON", "OFF")}
+          {element("Incomer 2", REPORT_COLORS.incomer, "incomer2", "OFF", "ON")}
+          {element("Bus coupler", REPORT_COLORS.coupler, "coupler", "OFF", "ON")}
         </tbody>
       </table>
       <p style={{ margin: "4px 0", fontSize: 13 }}>
-        Operating state: {toggleBtn("incomer1", "Incomer 1")}{toggleBtn("incomer2", "Incomer 2")}{toggleBtn("coupler", "Bus coupler")}
-        <span style={{ background: v.ok ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000", padding: "1px 6px" }}>
-          {v.ok ? "Valid: one incomer ON, the other incomer and the bus coupler OFF." : v.errors.join(" ")}
-        </span>
-        {" "}Limit {maxA} A design current per incomer.
+        <button type="button" onClick={() => { const r = switchToFailover(state); setState(r.state); setSteps(r.steps); }}>Incomer 1 unhealthy</button>{" "}
+        <button type="button" onClick={() => { const r = switchToNormal(state); setState(r.state); setSteps(r.steps); }}>Incomer 1 healthy again</button>{" "}
+        <span style={{ background: v.ok ? REPORT_COLORS.within : REPORT_COLORS.over, color: "#000", padding: "1px 6px" }}>{v.ok ? v.warnings.join(" ") : v.errors.join(" ")}</span>
+        {steps.length > 0 && <span> Sequence: {steps.join(" → ")}.</span>}
       </p>
       {imcc.issues.length > 0 && <ul style={{ margin: "2px 0", fontSize: 13 }}>{imcc.issues.map((x, n) => <li key={n}>{x.message}</li>)}</ul>}
       <details open>
-        <summary style={{ cursor: "pointer", fontSize: 13 }}>Bus layout: Incomer 1 · loads · bus coupler · loads · Incomer 2 ({s1.loads.length + s2.loads.length} rows)</summary>
+        <summary style={{ cursor: "pointer", fontSize: 13 }}>Panel: Incomer 1 · loads · Incomer 2 · bus coupler ({bus.loads.length} load rows)</summary>
         <div style={{ overflowX: "auto", maxHeight: 480, overflowY: "auto" }}>
           <table style={{ borderCollapse: "collapse" }}>
             <thead><tr>
-              {["S. NO.", "Load", "Method", "W/S/SP", "kW", "Current A", "kVA", "Working kVA", "Working A", "Design A", "Breaker"].map((h) => <th key={h} style={{ ...th, position: "sticky", top: 0 }}>{h}</th>)}
+              {["Row", "Load", "Method", "W/S/SP", "kW", "Current A", "kVA", "Working kVA", "Working A", "Design A", "Breaker"].map((h) => <th key={h} style={{ ...th, position: "sticky", top: 0 }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {inc(1, s1)}
-              {rowsOf(s1)}
-              <tr><td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td><td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={9}>Between the Incomer 1 and Incomer 2 sections · normally OFF</td><td style={bar(REPORT_COLORS.coupler)}>{imcc.coupler.ratingA ? breakerLabel(imcc.coupler) : ""}</td></tr>
-              {rowsOf(s2)}
-              {inc(2, s2)}
+              {incRow(1)}
+              {bus.loads.map(row)}
+              {incRow(2)}
+              <tr>
+                <td style={bar(REPORT_COLORS.coupler)}>Bus coupler</td>
+                <td style={{ ...bar(REPORT_COLORS.coupler), ...left }} colSpan={5}>Side by side with Incomer 2 · switched ON with it if Incomer 1 is unhealthy</td>
+                <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingKva)}</td><td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.workingA)}</td>
+                <td style={bar(REPORT_COLORS.coupler)}>{fmtInt(bus.designA)}</td><td style={bar(REPORT_COLORS.coupler)}>{rate(imcc.coupler)}</td>
+              </tr>
             </tbody>
           </table>
         </div>

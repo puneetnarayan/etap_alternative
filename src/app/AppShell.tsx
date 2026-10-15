@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readSheet } from "read-excel-file/universal";
 import { DEFAULT_MCC_ASSUMPTIONS, type MccAssumptions } from "@/core/mcc-breaker";
-import { appendFeedersToSheet, designImccs, imccFeederRows, parseImccLoadList, planIntake, type ImccDesignSet, type ImccFeederRow } from "@/core";
+import { DEFAULT_ACB_MAX_LOADING, DEFAULT_INCOMER_ACB_A, INCOMER_ACB_OPTIONS, appendFeedersToSheet, designImccs, imccFeederRows, parseImccLoadList, planIntake, type ImccDesignSet, type ImccFeederRow } from "@/core";
 import { loadLoadList, saveLoadList, type StoredLoadList } from "./loadListStore";
 
 export type MccStatus =
@@ -35,6 +35,12 @@ interface Shell {
   intake: (files: File[], opts?: { confirmed?: boolean }) => Promise<void>;
   /** One line per file handled by the last intake. */
   intakeNotice: string;
+  /** Maximum loading of an ACB (fraction, default 0.9), adjustable in the IMCC GUI. */
+  acbMaxLoading: number;
+  setAcbMaxLoading: (v: number) => void;
+  /** The incomer ACB size chosen in the IMCC GUI (A): 630, 800, 1000 (default) or 1250. */
+  incomerAcbA: number;
+  setIncomerAcbA: (v: number) => void;
   autoFeeders: boolean;
   setAutoFeeders: (on: boolean) => void;
   loadError: string;
@@ -86,6 +92,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [imccError, setImccError] = useState("");
   const [intakeNotice, setIntakeNotice] = useState("");
   const [autoFeeders, setAutoFeedersState] = useState(true); // ON by default
+  const [acbMaxLoading, setAcbMaxLoadingState] = useState(DEFAULT_ACB_MAX_LOADING);
+  const [incomerAcbA, setIncomerAcbState] = useState<number>(DEFAULT_INCOMER_ACB_A);
   const [loadError, setLoadError] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -93,12 +101,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setLoadList(loadLoadList());
     try { const t = sessionStorage.getItem(IMCC_LIST_KEY); if (t) setImccList(JSON.parse(t) as StoredLoadList); } catch { /* none */ }
-    try { const t = localStorage.getItem(IMCC_KEY); if (t) setAutoFeedersState((JSON.parse(t) as { auto?: boolean }).auto !== false); } catch { /* defaults */ }
+    try {
+      const t = localStorage.getItem(IMCC_KEY);
+      if (t) { const v = JSON.parse(t) as { auto?: boolean; acb?: number; inc?: number }; setAutoFeedersState(v.auto !== false); if (typeof v.acb === "number" && v.acb > 0 && v.acb <= 1) setAcbMaxLoadingState(v.acb); if ((INCOMER_ACB_OPTIONS as readonly number[]).includes(v.inc as number)) setIncomerAcbState(v.inc as number); }
+    } catch { /* defaults */ }
   }, []);
-  const setAutoFeeders = (on: boolean) => { setAutoFeedersState(on); try { localStorage.setItem(IMCC_KEY, JSON.stringify({ auto: on })); } catch { /* ignore */ } };
+  const persistImcc = (auto: boolean, acb: number, inc: number) => { try { localStorage.setItem(IMCC_KEY, JSON.stringify({ auto, acb, inc })); } catch { /* ignore */ } };
+  const setAutoFeeders = (on: boolean) => { setAutoFeedersState(on); persistImcc(on, acbMaxLoading, incomerAcbA); };
+  const setAcbMaxLoading = (v: number) => { setAcbMaxLoadingState(v); persistImcc(autoFeeders, v, incomerAcbA); };
+  const setIncomerAcbA = (v: number) => { setIncomerAcbState(v); persistImcc(autoFeeders, acbMaxLoading, v); };
   // The IMCC design is computed here so that a list added anywhere (sidebar or IMCC tab) is designed and linked at once.
   const imccLoads = useMemo(() => (imccList ? parseImccLoadList(imccList.sheet) : null), [imccList]);
-  const imccDesign = useMemo<ImccDesignSet | null>(() => (imccLoads && imccLoads.errors.length === 0 ? designImccs(imccLoads.loads, assumptions) : null), [imccLoads, assumptions]);
+  const imccDesign = useMemo<ImccDesignSet | null>(() => (imccLoads && imccLoads.errors.length === 0 ? designImccs(imccLoads.loads, assumptions, { acbMaxLoading, maxIncomerA: incomerAcbA }) : null), [imccLoads, assumptions, acbMaxLoading, incomerAcbA]);
   const imccFeeders = useMemo<readonly ImccFeederRow[]>(() => (imccDesign ? imccFeederRows(imccDesign) : []), [imccDesign]);
   useEffect(() => { setImccError(imccLoads?.errors.join(" ") ?? ""); }, [imccLoads]);
   // Switch ON: the IMCC incomer feeders are rows of the load list (transformer sizing, MCC and BOM see them). OFF: nothing changes.
@@ -190,7 +204,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     void generate();
   };
 
-  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ctx = useMemo(() => ({ status, generate, assumptions, setAssumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intake, intakeNotice, autoFeeders, setAutoFeeders, acbMaxLoading, setAcbMaxLoading, incomerAcbA, setIncomerAcbA }), [status, generate, assumptions, loadList, loadError, imccFeeders, imccList, imccDesign, imccError, intakeNotice, autoFeeders, acbMaxLoading, incomerAcbA]); // eslint-disable-line react-hooks/exhaustive-deps
   // Sidebar tabs: pastel, with a coloured bar on the active one.
   const tab = (active: boolean, activeBg: string, bar = "#B8AE96", idleBg = "transparent") => ({
     display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 8, textDecoration: "none", color: "#222",

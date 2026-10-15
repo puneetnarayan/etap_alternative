@@ -1,15 +1,20 @@
 /**
  * IMCC design (docs/imcc.md). Stand-alone: it works from its own IMCC load list. The only link to the rest of the
- * application is the "Automatic PMCC feeders" switch: when ON, each generated IMCC incomer is also an outgoing feeder
- * of the PMCC load list (`imccFeederRows`, `appendFeedersToSheet`); when OFF nothing outside the IMCC tab changes.
+ * application is the "Automatic PMCC feeders" switch: when ON, each IMCC incomer is also an outgoing feeder of the PMCC
+ * load list (`imccFeederRows`, `appendFeedersToSheet`); when OFF nothing outside the IMCC tab changes.
  *
- * Script / logic (`designImccs`): only working (W / w) loads are used for the design. They are taken in list order and
- * fill bus sections one after the other; a new section starts when adding the next load would push the section's design
- * current (working current x design multiplier) above the incomer limit (1000 A). Two sections make one IMCC, so the
- * number of IMCCs follows from the loads. Standby (S) and spare (SP) rows are placed with their group's (or preceding
- * working load's) section and are not counted. Current and breaker sizing reuse `currentFor` / `selectBreaker`.
+ * Panel: Incomer 1 at the beginning; Incomer 2 and the bus coupler side by side at the other end. One bus carries all
+ * the IMCC's loads. Normal state: Incomer 1 ON, Incomer 2 and bus coupler OFF. If Incomer 1 is unhealthy, Incomer 2 and the
+ * bus coupler are both switched ON, with an interlock that switches Incomer 1 OFF first if it is ON.
+ * So Incomer 1, Incomer 2 and the bus coupler each carry the whole IMCC and have the same calculated rating.
+ *
+ * Script (`designImccs`): only working (W / w) loads are used for the design. They are taken in list order and fill an
+ * IMCC until adding the next load would push its design current (working current x design multiplier) above the ACB
+ * limit: the incomer ACB chosen by the user (630, 800, 1000 or 1250 A; default 1000 A) at its maximum loading (90 %, adjustable). Then the next IMCC starts, so the
+ * number of IMCCs follows from the loads. Standby (S) and spare (SP) rows are placed with their group's (or the
+ * preceding working load's) IMCC and are not counted. Current and breaker sizing reuse `currentFor` / `selectBreaker`.
  */
-import { DEFAULT_MCC_ASSUMPTIONS, breakerLabel, currentFor, selectBreaker, type BreakerSelection, type MccAssumptions, type MccLoadType } from "./mcc-breaker";
+import { DEFAULT_MCC_ASSUMPTIONS, currentFor, selectBreaker, type BreakerSelection, type MccAssumptions, type MccLoadType } from "./mcc-breaker";
 
 /* --------------------------------- status --------------------------------- */
 
@@ -25,18 +30,18 @@ export function normalizeStatus(v: unknown): LoadStatus | undefined {
   return undefined;
 }
 
-/** SS = soft starter. */
-export type StartMethod = "DOL" | "RDOL" | "SS" | "VFD" | "PWR FDR";
+/** SS = soft starter. "PWR FDR" in a list is read as Feeder. */
+export type StartMethod = "DOL" | "RDOL" | "SS" | "VFD" | "Feeder";
 
 export function normalizeMethod(v: unknown): StartMethod | undefined {
   const t = String(v ?? "").trim().toUpperCase().replace(/\s+/g, " ");
   if (t === "DOL" || t === "RDOL" || t === "VFD" || t === "SS") return t;
   if (t === "SOFT STARTER" || t === "SOFTSTARTER") return "SS";
-  if (t === "PWR FDR" || t === "POWER FEEDER" || t === "FEEDER" || t === "PWR FEEDER") return "PWR FDR";
+  if (t === "FEEDER" || t === "PWR FDR" || t === "POWER FEEDER" || t === "PWR FEEDER") return "Feeder";
   return undefined;
 }
 
-/** A soft-starter motor is calculated like a DOL motor (power factor and efficiency): assumption, OPEN_ITEMS.md #12. */
+/** A soft-starter motor is calculated like a DOL motor (pf and efficiency): confirmed, OPEN_ITEMS.md #12. */
 export const loadTypeOf = (m: StartMethod | undefined): MccLoadType => (m === "VFD" ? "VFD" : m === "DOL" || m === "RDOL" || m === "SS" ? "DOL" : "FEEDER");
 
 export interface ImccLoad {
@@ -68,35 +73,62 @@ export type SwitchState = "ON" | "OFF";
 export interface OperatingState { incomer1: SwitchState; incomer2: SwitchState; coupler: SwitchState }
 export interface Validation { ok: boolean; errors: string[]; warnings: string[] }
 
-/** Operating philosophy as a rule. The default is the project's: exactly one incomer ON, coupler OFF. */
+/** Normal: Incomer 1 ON, Incomer 2 and bus coupler OFF. */
+export const NORMAL_STATE: OperatingState = { incomer1: "ON", incomer2: "OFF", coupler: "OFF" };
+/** Incomer 1 unhealthy: Incomer 1 OFF, Incomer 2 and bus coupler both ON. */
+export const FAILOVER_STATE: OperatingState = { incomer1: "OFF", incomer2: "ON", coupler: "ON" };
+
+/** Operating philosophy as a rule. The default: normal state, and the Incomer 1 failover with interlock. */
 export interface OperatingRule {
-  exactlyOneIncomerOn: boolean;
-  couplerMustBeOff: boolean;
+  /** Incomer 2 and the bus coupler are switched ON when Incomer 1 is unhealthy. */
+  failoverOnIncomer1Unhealthy: boolean;
   /** A rule that differs from the default is an engineering change and needs a named authoriser. */
   authorisedBy?: string;
 }
-export const DEFAULT_RULE: OperatingRule = { exactlyOneIncomerOn: true, couplerMustBeOff: true };
-export const NORMAL_STATE: OperatingState = { incomer1: "ON", incomer2: "OFF", coupler: "OFF" };
+export const DEFAULT_RULE: OperatingRule = { failoverOnIncomer1Unhealthy: true };
 
 export function validateOperatingState(s: OperatingState, rule: OperatingRule = DEFAULT_RULE): Validation {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const on = (s.incomer1 === "ON" ? 1 : 0) + (s.incomer2 === "ON" ? 1 : 0);
-  const changed = rule.exactlyOneIncomerOn !== DEFAULT_RULE.exactlyOneIncomerOn || rule.couplerMustBeOff !== DEFAULT_RULE.couplerMustBeOff;
-  if (changed && !rule.authorisedBy?.trim()) {
-    errors.push("The operating philosophy differs from the default (one incomer ON, the other incomer and the bus coupler OFF). That is an engineering change and needs a named authoriser.");
+  if (rule.failoverOnIncomer1Unhealthy !== DEFAULT_RULE.failoverOnIncomer1Unhealthy && !rule.authorisedBy?.trim()) {
+    errors.push("The operating philosophy differs from the default (Incomer 2 and the bus coupler ON when Incomer 1 is unhealthy). That is an engineering change and needs a named authoriser.");
   }
-  if (rule.exactlyOneIncomerOn) {
-    if (on === 2) errors.push("Both incomers are ON: not permitted. Exactly one incomer may be ON at a time.");
-    if (on === 0) errors.push("No incomer is ON: the IMCC is not supplied. Exactly one incomer must be ON.");
+  if (s.incomer1 === "ON" && (s.incomer2 === "ON" || s.coupler === "ON")) {
+    errors.push(`Interlock: Incomer 1 is ON, so ${s.incomer2 === "ON" && s.coupler === "ON" ? "Incomer 2 and the bus coupler" : s.incomer2 === "ON" ? "Incomer 2" : "the bus coupler"} must stay OFF. Incomer 1 has to be switched OFF first.`);
   }
-  if (rule.couplerMustBeOff && s.coupler === "ON") {
-    errors.push(on === 1
-      ? "Bus coupler is ON with one incomer ON: not permitted. One incomer is not assumed to supply both bus sections through the coupler."
-      : "Bus coupler is ON: it must remain OFF.");
+  if (s.incomer1 === "OFF") {
+    if (s.incomer2 === "ON" && s.coupler === "OFF") errors.push("Incomer 2 is ON with the bus coupler OFF: they are switched ON together (Incomer 2 and the bus coupler).");
+    else if (s.incomer2 === "OFF" && s.coupler === "ON") errors.push("The bus coupler is ON without Incomer 2: they are switched ON together.");
+    else if (s.incomer2 === "OFF" && s.coupler === "OFF") errors.push("No source is ON: the IMCC is not supplied.");
+    else if (!rule.failoverOnIncomer1Unhealthy) errors.push("Incomer 2 and the bus coupler ON is not permitted by the operating philosophy in use.");
   }
-  if (errors.length === 0 && on === 1 && s.coupler === "OFF") warnings.push("Permitted normal state: one incomer ON, the other incomer OFF, bus coupler OFF.");
+  if (errors.length === 0) {
+    warnings.push(s.incomer1 === "ON"
+      ? "Normal state: Incomer 1 ON, Incomer 2 and bus coupler OFF."
+      : "Incomer 1 unhealthy: Incomer 1 OFF, Incomer 2 and bus coupler ON. Each carries the whole IMCC.");
+  }
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * Incomer 1 unhealthy: the steps to take from `from`. The interlock switches Incomer 1 OFF first if it is ON, then
+ * Incomer 2 and the bus coupler are switched ON together.
+ */
+export function switchToFailover(from: OperatingState): { state: OperatingState; steps: string[] } {
+  const steps: string[] = [];
+  if (from.incomer1 === "ON") steps.push("Interlock: Incomer 1 switched OFF");
+  if (from.incomer2 === "OFF") steps.push("Incomer 2 switched ON");
+  if (from.coupler === "OFF") steps.push("Bus coupler switched ON");
+  return { state: { ...FAILOVER_STATE }, steps: steps.length ? steps : ["Already in the Incomer 1 unhealthy state"] };
+}
+
+/** Incomer 1 healthy again: the reverse order: Incomer 2 and the bus coupler OFF first, then Incomer 1 ON. */
+export function switchToNormal(from: OperatingState): { state: OperatingState; steps: string[] } {
+  const steps: string[] = [];
+  if (from.incomer2 === "ON") steps.push("Incomer 2 switched OFF");
+  if (from.coupler === "ON") steps.push("Bus coupler switched OFF");
+  if (from.incomer1 === "OFF") steps.push("Incomer 1 switched ON");
+  return { state: { ...NORMAL_STATE }, steps: steps.length ? steps : ["Already in the normal state"] };
 }
 
 /* --------------------------------- results -------------------------------- */
@@ -113,9 +145,7 @@ export interface LoadResult {
   breaker?: BreakerSelection;
 }
 
-export interface SectionResult {
-  /** 1 or 2 within its IMCC. */
-  section: 1 | 2;
+export interface BusResult {
   loads: LoadResult[];
   working: number;
   standby: number;
@@ -128,54 +158,56 @@ export interface SectionResult {
   /** Reference workbook's "LCE KVA" = working kVA x 0.8. Meaning not confirmed (OPEN_ITEMS.md #8): reported, never used for sizing. */
   lceKva: number;
   designA: number;
-  breaker: BreakerSelection;
 }
 
 export interface ImccDesign {
   tag: string;
   index: number;
-  sections: [SectionResult, SectionResult];
-  /** Calculated design rating of Incomer 1 (from its own section's working load). */
+  /** The IMCC bus: all its loads. */
+  bus: BusResult;
+  /** Incomer 1: the selected incomer ACB. */
   incomer1: BreakerSelection;
-  /** Incomer 2 and the bus coupler follow Incomer 1. */
+  /** Incomer 2 and the bus coupler carry the whole IMCC when Incomer 1 is unhealthy: same rating. */
   incomer2: BreakerSelection;
   coupler: BreakerSelection;
+  /** Design current / rating of the incomers (fraction); undefined when there is no rating. */
+  loading?: number;
+  /** The ACB maximum loading that applies (fraction). */
+  loadingLimit: number;
   issues: { severity: "error" | "warning"; message: string }[];
 }
 
 export interface ImccDesignSet {
   imccs: ImccDesign[];
-  /** Problems that belong to no single IMCC (missing status, a load larger than one incomer ...). */
+  /** Problems that belong to no single IMCC (missing status, a load larger than the limit ...). */
   issues: { severity: "error" | "warning"; message: string }[];
+  /** The selected incomer ACB size (A): 630, 800, 1000 or 1250. */
   maxIncomerA: number;
+  /** Maximum loading of an ACB (fraction), adjustable. */
+  acbMaxLoading: number;
+  /** Largest design current one IMCC takes: maxIncomerA x acbMaxLoading. */
+  maxDesignA: number;
   voltageV: number;
 }
 
 export const LCE_FACTOR = 0.8;
-export const MAX_INCOMER_A = 1000;
+export const DEFAULT_ACB_MAX_LOADING = 0.9;
 const SQ3 = Math.sqrt(3);
 const calcV = (v: number, a: MccAssumptions) => (Math.round(v) === 433 ? a.calcVoltage433 : v);
 
-function emptySection(section: 1 | 2): SectionResult {
-  return {
-    section, loads: [], working: 0, standby: 0, spare: 0, connectedKva: 0, workingKva: 0, workingA: 0, standbyKva: 0, lceKva: 0, designA: 0,
-    breaker: { kind: "REVIEW", status: "review", message: "No design current available, so no breaker is selected." },
-  };
-}
+/** The incomer ACB sizes the user can choose (A). */
+export const INCOMER_ACB_OPTIONS = [630, 800, 1000, 1250] as const;
+export const DEFAULT_INCOMER_ACB_A = 1000;
+/** Kept for callers that want the default size. */
+export const MAX_INCOMER_A = DEFAULT_INCOMER_ACB_A;
 
-function sectionOf(section: 1 | 2, loads: LoadResult[], a: MccAssumptions): SectionResult {
-  const sum = (f: (x: LoadResult) => number) => loads.reduce((t, x) => t + f(x), 0);
-  const st = (s: LoadStatus) => loads.filter((x) => x.load.status === s);
-  const workingA = sum((x) => x.workingA);
-  const designA = workingA * a.designMultiplier;
-  const workingKva = sum((x) => x.workingKva);
-  return {
-    section, loads, working: st("W").length, standby: st("S").length, spare: st("SP").length,
-    workingKva, workingA, designA, standbyKva: st("S").reduce((t, x) => t + (x.kva ?? 0), 0),
-    connectedKva: [...st("W"), ...st("S")].reduce((t, x) => t + (x.kva ?? 0), 0),
-    lceKva: workingKva * LCE_FACTOR,
-    breaker: selectBreaker(workingA > 0 ? designA : undefined, { mccb630: a.mccb630 }),
-  };
+/**
+ * The incomer / bus-coupler device: the EDO ACB chosen by the user. It carries the whole IMCC, so Incomer 1, Incomer 2 and
+ * the bus coupler are all this size. Without a working load there is nothing to rate.
+ */
+export function incomerAcb(ratingA: number, hasLoad: boolean): BreakerSelection {
+  if (!hasLoad) return { kind: "REVIEW", status: "review", message: "No design current available, so no breaker is selected." };
+  return { kind: "EDO ACB", ratingA, status: "ok", message: `${ratingA} A EDO ACB (selected incomer size).` };
 }
 
 /** Current / kVA of one load with the application's conventions. */
@@ -191,16 +223,32 @@ export function loadResult(l: ImccLoad, voltageV: number, a: MccAssumptions = DE
   };
 }
 
+function busOf(loads: LoadResult[], a: MccAssumptions): BusResult {
+  const sum = (f: (x: LoadResult) => number) => loads.reduce((t, x) => t + f(x), 0);
+  const st = (s: LoadStatus) => loads.filter((x) => x.load.status === s);
+  const workingA = sum((x) => x.workingA);
+  const workingKva = sum((x) => x.workingKva);
+  return {
+    loads, working: st("W").length, standby: st("S").length, spare: st("SP").length,
+    workingKva, workingA, designA: workingA * a.designMultiplier,
+    standbyKva: st("S").reduce((t, x) => t + (x.kva ?? 0), 0),
+    connectedKva: [...st("W"), ...st("S")].reduce((t, x) => t + (x.kva ?? 0), 0),
+    lceKva: workingKva * LCE_FACTOR,
+  };
+}
+
 /**
- * The design script. Working loads in list order fill sections up to `maxIncomerA` of design current; two sections
- * per IMCC. Returns as many IMCCs as the loads need (none when there is no working load).
+ * The design script. Working loads in list order fill an IMCC up to `maxIncomerA x acbMaxLoading` of design current;
+ * then the next IMCC starts. Returns as many IMCCs as the loads need (none when there is no working load).
  */
 export function designImccs(
   loads: readonly ImccLoad[],
   a: MccAssumptions = DEFAULT_MCC_ASSUMPTIONS,
-  opts: { maxIncomerA?: number; voltageV?: number } = {},
+  opts: { maxIncomerA?: number; acbMaxLoading?: number; voltageV?: number } = {},
 ): ImccDesignSet {
   const maxA = opts.maxIncomerA ?? MAX_INCOMER_A;
+  const acbMaxLoading = opts.acbMaxLoading ?? DEFAULT_ACB_MAX_LOADING;
+  const maxDesignA = maxA * acbMaxLoading;
   const voltageV = opts.voltageV ?? 433;
   const issues: ImccDesignSet["issues"] = [];
   for (const l of loads) {
@@ -211,71 +259,65 @@ export function designImccs(
   for (const l of loads) {
     if (l.status === undefined) issues.push({ severity: "error", message: `"${l.description}": status ${l.statusText ? `"${l.statusText}"` : "missing"}; use W, w, S or Spare. Not counted, not placed.` });
     else if (l.status !== "SP" && l.kw === undefined && l.ratedA === undefined) issues.push({ severity: "warning", message: `"${l.description}": no kW or current, so it carries no load in the calculation.` });
-    if (l.status !== undefined && l.status !== "SP" && !l.method) issues.push({ severity: "warning", message: `"${l.description}": method of starting missing or not recognised (DOL, RDOL, SS, VFD, PWR FDR); treated as a power feeder.` });
+    if (l.status !== undefined && l.status !== "SP" && !l.method) issues.push({ severity: "warning", message: `"${l.description}": method of starting missing or not recognised (DOL, RDOL, SS, VFD, Feeder); treated as a feeder.` });
   }
   const results = valid.map((l) => loadResult(l, voltageV, a));
 
-  // 1. Working loads fill sections in list order.
-  const secOf = new Map<string, number>();
+  // 1. Working loads fill IMCCs in list order.
+  const imccOf = new Map<string, number>();
   let k = 0;
   let acc = 0;
   for (const r of results) {
     if (!r.working) continue;
-    const designIfAdded = (acc + r.workingA) * a.designMultiplier;
-    if (designIfAdded > maxA + 1e-9 && acc > 0) { k++; acc = 0; }
-    if (r.workingA * a.designMultiplier > maxA + 1e-9) {
-      issues.push({ severity: "error", message: `"${r.load.description}": design current ${(r.workingA * a.designMultiplier).toFixed(0)} A alone exceeds the ${maxA} A incomer limit. It is placed alone in its own section: engineering review required.` });
+    if ((acc + r.workingA) * a.designMultiplier > maxDesignA + 1e-9 && acc > 0) { k++; acc = 0; }
+    if (r.workingA * a.designMultiplier > maxDesignA + 1e-9) {
+      issues.push({ severity: "error", message: `"${r.load.description}": design current ${(r.workingA * a.designMultiplier).toFixed(0)} A alone exceeds ${maxDesignA.toFixed(0)} A (${maxA} A ACB at ${(acbMaxLoading * 100).toFixed(0)} % maximum loading). It is placed alone in its own IMCC: engineering review required.` });
     }
     acc += r.workingA;
-    secOf.set(r.load.id, k);
+    imccOf.set(r.load.id, k);
   }
-  const hasWorking = secOf.size > 0;
-  // 2. Standby and spare rows go with their group's working load, else the nearest preceding working load.
-  const groupSec = new Map<string, number>();
-  for (const r of results) if (r.working && r.load.group?.trim()) { const g = r.load.group.trim().toLowerCase(); if (!groupSec.has(g)) groupSec.set(g, secOf.get(r.load.id)!); }
-  let lastSec: number | undefined;
-  const firstWorkingSec = hasWorking ? secOf.get(results.find((r) => r.working)!.load.id)! : 0;
-  for (const r of results) {
-    if (r.working) { lastSec = secOf.get(r.load.id)!; continue; }
-    const g = r.load.group?.trim().toLowerCase();
-    secOf.set(r.load.id, (g ? groupSec.get(g) : undefined) ?? lastSec ?? firstWorkingSec);
-  }
-  if (!hasWorking) {
+  if (imccOf.size === 0) {
     issues.push({ severity: "error", message: "No working (W / w) load: there is nothing to design an IMCC for." });
-    return { imccs: [], issues, maxIncomerA: maxA, voltageV };
+    return { imccs: [], issues, maxIncomerA: maxA, acbMaxLoading, maxDesignA, voltageV };
+  }
+  // 2. Standby and spare rows go with their group's IMCC, else the nearest preceding working load's.
+  const groupImcc = new Map<string, number>();
+  for (const r of results) if (r.working && r.load.group?.trim()) { const g = r.load.group.trim().toLowerCase(); if (!groupImcc.has(g)) groupImcc.set(g, imccOf.get(r.load.id)!); }
+  let last: number | undefined;
+  const first = imccOf.get(results.find((r) => r.working)!.load.id)!;
+  for (const r of results) {
+    if (r.working) { last = imccOf.get(r.load.id)!; continue; }
+    const g = r.load.group?.trim().toLowerCase();
+    imccOf.set(r.load.id, (g ? groupImcc.get(g) : undefined) ?? last ?? first);
   }
 
-  const nSections = Math.max(...secOf.values()) + 1;
-  const bySection: LoadResult[][] = Array.from({ length: nSections + (nSections % 2) }, () => []);
-  for (const r of results) bySection[secOf.get(r.load.id)!].push(r);
+  const n = Math.max(...imccOf.values()) + 1;
+  const byImcc: LoadResult[][] = Array.from({ length: n }, () => []);
+  for (const r of results) byImcc[imccOf.get(r.load.id)!].push(r);
 
-  const imccs: ImccDesign[] = [];
-  for (let i = 0; i < bySection.length; i += 2) {
-    const s1 = sectionOf(1, bySection[i], a);
-    const s2 = bySection[i + 1].length ? sectionOf(2, bySection[i + 1], a) : emptySection(2);
-    const incomer1 = s1.breaker;
-    const tag = `IMCC-${String(i / 2 + 1).padStart(2, "0")}`;
+  const imccs: ImccDesign[] = byImcc.map((ls, i) => {
+    const bus = busOf(ls, a);
+    const tag = `IMCC-${String(i + 1).padStart(2, "0")}`;
+    const incomer1 = incomerAcb(maxA, bus.workingA > 0);
     const imccIssues: ImccDesign["issues"] = [];
-    if (incomer1.kind === "REVIEW") imccIssues.push({ severity: "warning", message: `Incomer 1: ${incomer1.message}` });
-    if (s2.breaker.ratingA !== undefined && incomer1.ratingA !== undefined && s2.breaker.ratingA > incomer1.ratingA) {
-      imccIssues.push({ severity: "warning", message: `Incomer 2 section needs ${breakerLabel(s2.breaker)}, more than Incomer 1's ${breakerLabel(incomer1)} which Incomer 2 and the bus coupler follow: review.` });
+    if (bus.workingA > 0 && bus.designA > maxDesignA + 1e-9) imccIssues.push({ severity: "warning", message: `${tag}: design current ${bus.designA.toFixed(0)} A is above ${maxDesignA.toFixed(0)} A (${maxA} A ACB at ${(acbMaxLoading * 100).toFixed(0)} % maximum loading): engineering review required.` });
+    const groups = new Map<string, { w: number; s: number }>();
+    for (const x of bus.loads) {
+      const g = x.load.group?.trim();
+      if (!g || x.load.status === "SP") continue;
+      const e = groups.get(g) ?? { w: 0, s: 0 };
+      if (x.load.status === "W") e.w++; else e.s++;
+      groups.set(g, e);
     }
-    if (s2.workingA === 0) imccIssues.push({ severity: "warning", message: "Incomer 2 section has no working load: no PMCC feeder is generated for Incomer 2." });
-    // Duty/standby group with standby but no working load in the section.
-    for (const sec of [s1, s2]) {
-      const groups = new Map<string, { w: number; s: number }>();
-      for (const x of sec.loads) {
-        const g = x.load.group?.trim();
-        if (!g || x.load.status === "SP") continue;
-        const e = groups.get(g) ?? { w: 0, s: 0 };
-        if (x.load.status === "W") e.w++; else e.s++;
-        groups.set(g, e);
-      }
-      for (const [g, e] of groups) if (e.w === 0 && e.s > 0) imccIssues.push({ severity: "warning", message: `${tag} Incomer ${sec.section}: duty/standby group "${g}" has standby but no working load.` });
-    }
-    imccs.push({ tag, index: i / 2 + 1, sections: [s1, s2], incomer1, incomer2: { ...incomer1 }, coupler: { ...incomer1 }, issues: imccIssues });
-  }
-  return { imccs, issues, maxIncomerA: maxA, voltageV };
+    for (const [g, e] of groups) if (e.w === 0 && e.s > 0) imccIssues.push({ severity: "warning", message: `${tag}: duty/standby group "${g}" has standby but no working load.` });
+    return {
+      tag, index: i + 1, bus, incomer1, incomer2: { ...incomer1 }, coupler: { ...incomer1 },
+      loading: incomer1.ratingA ? bus.designA / incomer1.ratingA : undefined,
+      loadingLimit: acbMaxLoading,
+      issues: imccIssues,
+    };
+  });
+  return { imccs, issues, maxIncomerA: maxA, acbMaxLoading, maxDesignA, voltageV };
 }
 
 /* --------------------- the "Automatic PMCC feeders" switch ------------------ */
@@ -285,28 +327,28 @@ export interface ImccFeederRow {
   description: string;
   imccTag: string;
   incomer: 1 | 2;
-  /** Working current of the incomer's section (A). */
+  /** Working current of the IMCC (A): each incomer carries the whole IMCC. */
   amps: number;
   kva: number;
   voltageV: number;
-  /** W for Incomer 1 (normally ON), S for Incomer 2 (alternative source, normally OFF). */
+  /** W for Incomer 1 (normally ON), S for Incomer 2 (takes over when Incomer 1 is unhealthy). */
   status: "W" | "S";
   /** The IMCC tag: the two incomers go to different transformer sections (existing duty/standby group rule). */
   group: string;
 }
 
 /**
- * One outgoing feeder per IMCC incomer that has a working load. The two incomers are alternative sources: Incomer 1
- * is working (W), Incomer 2 standby (S), and both carry the group = IMCC tag so the transformer sizing places them on
- * different bus sections. Sized from the section's working current, never from the incomer breaker rating.
+ * Two outgoing feeders per IMCC with a working load, one for each incomer. Incomer 1 is working (W), Incomer 2 standby (S):
+ * only one of them carries the IMCC at a time, so the working demand is counted once; for transformer sizing the
+ * standby feeder is counted too, as every standby load is. Both carry the IMCC tag as group, so the sizing places
+ * them on different transformer sections. Sized from the IMCC's working current, never from the incomer breaker rating.
  */
 export function imccFeederRows(set: ImccDesignSet): ImccFeederRow[] {
   const out: ImccFeederRow[] = [];
   for (const i of set.imccs) {
+    if (i.bus.workingA <= 0) continue;
     for (const n of [1, 2] as const) {
-      const s = i.sections[n - 1];
-      if (s.workingA <= 0) continue;
-      out.push({ description: `${i.tag} Incomer ${n}`, imccTag: i.tag, incomer: n, amps: s.workingA, kva: s.workingKva, voltageV: set.voltageV, status: n === 1 ? "W" : "S", group: i.tag });
+      out.push({ description: `${i.tag} Incomer ${n}`, imccTag: i.tag, incomer: n, amps: i.bus.workingA, kva: i.bus.workingKva, voltageV: set.voltageV, status: n === 1 ? "W" : "S", group: i.tag });
     }
   }
   return out;
@@ -348,3 +390,4 @@ export function appendFeedersToSheet(sheet: readonly (readonly unknown[])[], fee
   }
   return out;
 }
+

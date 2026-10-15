@@ -1,15 +1,14 @@
 /**
  * Excel output for the IMCC design (docs/imcc.md). ExcelJS, loaded only when a workbook is generated.
  *
- * One workbook: a Summary sheet, one sheet per IMCC (layout of the reference workbook: S. NO., description, kW, current,
- * W/S/SP, method, group, current, kVA, working kVA, working current, LCE kVA, design current, breaker, notes; formulas,
- * section totals, incomer and bus-coupler ratings) and a Notes sheet with the assumptions the formulas read.
+ * One workbook: a Summary sheet, one sheet per IMCC (panel order: Incomer 1 | loads | Incomer 2 | Bus coupler; loading block,
+ * formulas, ON green / OFF light red) and a Notes sheet with the assumptions the formulas read.
  * Same look as the other workbooks of the application: Calibri 11, light-orange headers, blue input / green calculated.
  */
 import ExcelJS from "exceljs";
 import { DEFAULT_MCC_ASSUMPTIONS, breakerLabel, type MccAssumptions } from "./mcc-breaker";
 import { stripAuthor } from "./mcc-workbook";
-import { LCE_FACTOR, imccFeederRows, loadTypeOf, type ImccDesign, type ImccDesignSet, type LoadResult } from "./imcc";
+import { FAILOVER_STATE, LCE_FACTOR, NORMAL_STATE, imccFeederRows, loadTypeOf, type ImccDesign, type ImccDesignSet, type LoadResult } from "./imcc";
 import { REPORT_COLORS, kindColor } from "./report";
 
 const THIN = { style: "thin" as const, color: { argb: "FFBFBFBF" } };
@@ -41,44 +40,44 @@ export function buildImccWorkbook(set: ImccDesignSet, a: MccAssumptions = DEFAUL
   wb.creator = ""; wb.lastModifiedBy = "";
   wb.calcProperties.fullCalcOnLoad = true;
   buildSummary(wb.addWorksheet("Summary", { views: [{ showGridLines: false }] }), set, o);
-  for (const i of set.imccs) buildImccSheet(wb.addWorksheet(i.tag, { views: [{ state: "frozen", ySplit: 12, showGridLines: false }] }), i, set, o);
+  for (const i of set.imccs) buildImccSheet(wb.addWorksheet(i.tag, { views: [{ showGridLines: false }] }), i, set, o);
   buildNotes(wb.addWorksheet("Notes", { views: [{ showGridLines: false }] }), set, a);
   return wb;
 }
 
+/** ON = light green, OFF = light red. */
+const stateFill = (v: string) => fill(v === "ON" ? WITHIN : OVER);
+const pctText = (v: number | undefined) => (v === undefined ? "" : v);
+
 function buildSummary(ws: ExcelJS.Worksheet, set: ImccDesignSet, o: ImccWorkbookOptions) {
-  [6, 12, 14, 14, 14, 18, 12, 14, 14, 18, 12, 18, 60].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  [6, 12, 16, 14, 14, 18, 14, 18, 60].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   ws.getCell("A1").value = "IMCC design – summary"; ws.getCell("A1").font = F({ bold: true, size: 16 });
   ws.getCell("A2").value = "Preliminary engineering aid, not a substitute for approved design. Only working (W / w) loads are used; the number of IMCCs follows from the loads."; ws.getCell("A2").font = F({ italic: true });
   const info: [string, string][] = [
     ["Source", o.sourceName ?? "IMCC load list"],
-    ["Incomer limit", `${set.maxIncomerA} A design current per incomer (working current x design multiplier)`],
+    ["Limit per IMCC", `${set.maxDesignA.toFixed(0)} A design current (working current x design multiplier): ${set.maxIncomerA} A ACB at ${(set.acbMaxLoading * 100).toFixed(0)} % maximum loading`],
     ["IMCCs", String(set.imccs.length)],
     ["Automatic PMCC feeders", o.linked ? "ON: each incomer is an outgoing feeder of the PMCC list (see below)" : "OFF: the IMCC design is independent; nothing is added to the PMCC"],
-    ["Operating philosophy", "Exactly one incomer ON at a time; the other incomer and the bus coupler stay OFF."],
+    ["Operating philosophy", "Normal: Incomer 1 ON, Incomer 2 and bus coupler OFF. Incomer 1 unhealthy: Incomer 2 and bus coupler both ON, with an interlock that switches Incomer 1 OFF first."],
   ];
   info.forEach(([k, v], i) => {
     ws.getCell(4 + i, 1).value = k; ws.getCell(4 + i, 1).font = F({ bold: true }); ws.mergeCells(4 + i, 1, 4 + i, 3);
-    ws.getCell(4 + i, 4).value = v; ws.getCell(4 + i, 4).font = F(); ws.mergeCells(4 + i, 4, 4 + i, 13);
+    ws.getCell(4 + i, 4).value = v; ws.getCell(4 + i, 4).font = F(); ws.mergeCells(4 + i, 4, 4 + i, 9);
   });
   const H = 10;
-  ["", "IMCC", "Loads (W / S / SP)", "Incomer 1 working A", "Incomer 1 design A", "Incomer 1 rating", "Incomer 1 loading", "Incomer 2 working A", "Incomer 2 design A", "Incomer 2 rating (= Incomer 1)", "Incomer 2 loading", "Bus coupler (= Incomer 1)", "Checks"].forEach((t, i) => {
+  ["", "IMCC", "Loads (W / S / SP)", "Working current (A)", "Design current (A)", "Incomer 1, Incomer 2 and bus coupler rating", "Loading of the rating", "Loading limit", "Checks"].forEach((t, i) => {
     const c = ws.getCell(H, i + 1); c.value = t; c.font = F({ bold: true }); c.fill = fill(HEADER); c.border = BORDER; c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
-  ws.getColumn(12).width = 18; ws.getColumn(13).width = 60;
-  ws.getRow(H).height = 34;
+  ws.getRow(H).height = 48;
   set.imccs.forEach((i, n) => {
-    const [s1, s2] = i.sections;
-    const load = (sec: typeof s1) => (i.incomer1.ratingA ? sec.designA / i.incomer1.ratingA : undefined);
-    const v: ExcelJS.CellValue[] = [n + 1, i.tag, `${s1.working + s2.working} / ${s1.standby + s2.standby} / ${s1.spare + s2.spare}`, s1.workingA, s1.designA,
-      s1.workingA > 0 ? breakerLabel(i.incomer1) : "", load(s1) ?? "", s2.workingA, s2.designA, s2.workingA > 0 ? breakerLabel(i.incomer2) : "", s2.workingA > 0 ? load(s2) ?? "" : "", breakerLabel(i.coupler),
-      i.issues.map((x) => x.message).join(" ")];
+    const b = i.bus;
+    const v: ExcelJS.CellValue[] = [n + 1, i.tag, `${b.working} / ${b.standby} / ${b.spare}`, b.workingA, b.designA, i.incomer1.ratingA ? breakerLabel(i.incomer1) : "Not calculated",
+      pctText(i.loading), i.loadingLimit, i.issues.map((x) => x.message).join(" ")];
     v.forEach((x, c) => {
-      const cell = ws.getCell(H + 1 + n, c + 1); cell.value = x; cell.border = BORDER; cell.font = F(); cell.alignment = { vertical: "top", wrapText: c === 12 };
-      if (typeof x === "number" && c > 2) cell.numFmt = c === 6 || c === 10 ? "0.0%" : "#,##0";
-      if ((c === 6 || c === 10) && typeof x === "number") cell.fill = fill(x > 1 + 1e-9 ? OVER : WITHIN);
+      const cell = ws.getCell(H + 1 + n, c + 1); cell.value = x; cell.border = BORDER; cell.font = F(); cell.alignment = { vertical: "top", wrapText: c === 8 };
+      if (typeof x === "number" && c > 2) cell.numFmt = c >= 6 ? "0%" : "#,##0";
+      if (c === 6 && typeof x === "number") cell.fill = fill(x > i.loadingLimit + 1e-9 ? OVER : WITHIN);
       if (c === 1) cell.fill = fill(INCOMER);
-      if (c === 11) cell.fill = fill(COUPLER);
     });
   });
   let r = H + set.imccs.length + 3;
@@ -87,10 +86,14 @@ function buildSummary(ws: ExcelJS.Worksheet, set: ImccDesignSet, o: ImccWorkbook
     ["", "Outgoing feeder", "Status", "Current (A)", "kVA", "Group"].forEach((t, i) => { const c = ws.getCell(r, i + 1); c.value = t; c.font = F({ bold: true }); c.fill = fill(HEADER); c.border = BORDER; });
     r++;
     for (const f of imccFeederRows(set)) {
-      [r, f.description, f.status, f.amps, f.kva, f.group].forEach((x, i) => { if (i === 0) return; const c = ws.getCell(r, i + 1); c.value = x as ExcelJS.CellValue; c.border = BORDER; c.font = F(); if (typeof x === "number") c.numFmt = "#,##0"; });
+      [r, f.description, f.status, f.amps, f.kva, f.group].forEach((x, i) => {
+        if (i === 0) return;
+        const c = ws.getCell(r, i + 1); c.value = x as ExcelJS.CellValue; c.border = BORDER; c.font = F(); if (typeof x === "number") c.numFmt = "#,##0";
+        if (i === 2) c.fill = fill(kind(String(x))!);
+      });
       r++;
     }
-    ws.getCell(r + 1, 1).value = "The two incomers are alternative sources: Incomer 1 is W, Incomer 2 is S (standby); they share a group so they land on different transformer sections.";
+    ws.getCell(r + 1, 1).value = "Only one incomer carries the IMCC at a time: Incomer 1 is W, Incomer 2 is S (it takes over if Incomer 1 is unhealthy). They share a group so they land on different transformer sections.";
     ws.getCell(r + 1, 1).font = F({ italic: true });
     r += 3;
   }
@@ -103,13 +106,14 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
   [9, 46, 9, 12, 10, 12, 30, 11, 10, 11, 12, 10, 12, 20, 60, 12, 10, 11].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   ws.getCell("A1").value = `${imcc.tag} – IMCC load list and loading`; ws.getCell("A1").font = F({ bold: true, size: 16 });
   ws.getCell("A2").value = "Preliminary engineering aid, not a substitute for approved design. Assumptions: Notes sheet."; ws.getCell("A2").font = F({ italic: true });
-  const feeder = (n: 1 | 2) => (o.linked ? (imcc.sections[n - 1].workingA > 0 ? `PMCC outgoing feeder "${imcc.tag} Incomer ${n}"` : "no PMCC feeder (no working load)") : "PMCC feeder not generated (Automatic PMCC feeders switch OFF)");
+  const feeder = (n: 1 | 2) => (o.linked ? (imcc.bus.workingA > 0 ? `PMCC outgoing feeder "${imcc.tag} Incomer ${n}"` : "no PMCC feeder (no working load)") : "PMCC feeder not generated (Automatic PMCC feeders switch OFF)");
   const info: [string, string][] = [
     ["IMCC tag", imcc.tag],
-    ["Design basis", `Working (W / w) loads only; incomer limit ${set.maxIncomerA} A design current. Voltage ${set.voltageV} V.`],
+    ["Design basis", `Working (W / w) loads only. Limit ${set.maxDesignA.toFixed(0)} A design current: ${set.maxIncomerA} A ACB at ${(set.acbMaxLoading * 100).toFixed(0)} % maximum loading. Voltage ${set.voltageV} V.`],
     ["Incomer 1 supplied from", feeder(1)],
     ["Incomer 2 supplied from", feeder(2)],
-    ["Operating philosophy", "Exactly one incomer ON at a time (normally Incomer 1); the other incomer and the bus coupler stay OFF."],
+    ["Panel order", "Incomer 1 at the beginning; Incomer 2 and the bus coupler side by side at the other end."],
+    ["Operating philosophy", "Normal: Incomer 1 ON, Incomer 2 and bus coupler OFF. Incomer 1 unhealthy: Incomer 2 and bus coupler both ON, interlocked so Incomer 1 is switched OFF first."],
   ];
   info.forEach(([k, v], i) => {
     const r = 4 + i;
@@ -123,95 +127,80 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
   });
   const bar = (r: number, color: string, bold = true) => { for (let c = 1; c <= COLS; c++) { const cell = ws.getCell(r, c); cell.fill = fill(color); cell.border = BORDER; cell.font = F({ bold }); cell.alignment = { vertical: "middle", wrapText: c === 2 || c === 15 }; } };
 
-  // ---- row positions of the bus layout (known first, the loading block refers to them) ----
-  const SUMMARY = 11; // header row of the loading block
-  const LEGEND = 16;
-  const HEAD = 19;
-  const [s1, s2] = imcc.sections;
+  // ---- row positions: INC 1 | loads | INC 2 | BC (known first: the loading block refers to them) ----
+  const SUMMARY = 12; // header row of the loading block
+  const LEGEND = 17;
+  const HEAD = 20;
+  const bus = imcc.bus;
   const inc1 = HEAD + 1;
-  const first1 = inc1 + 1, last1 = first1 + s1.loads.length - 1;
-  const coup = last1 + 1;
-  const first2 = coup + 1, last2 = first2 + s2.loads.length - 1;
-  const inc2 = last2 + 1;
-  const mult = N.mult;
+  const first = inc1 + 1, last = first + bus.loads.length - 1;
+  const inc2 = last + 1;
+  const coup = inc2 + 1;
+  const limit = imcc.loadingLimit;
 
   // ---- loading block ----
   ws.getCell(SUMMARY - 1, 1).value = "Loading"; ws.getCell(SUMMARY - 1, 1).font = F({ bold: true, size: 13 });
-  head(SUMMARY, ["", "Element", "", "", "Normal state", "", "", "", "", "Working kVA", "Working current (A)", "", "Design current (A)", "Calculated rating", "Note", "", "Rating (A)", "Loading (% of rating)"]);
+  head(SUMMARY, ["", "Element", "", "", "Normal state", "Incomer 1 unhealthy", "", "", "", "Working kVA", "Working current (A)", "", "Design current (A)", "Calculated rating", "Note", "", "Rating (A)", "Loading (% of rating)"]);
   ws.getRow(SUMMARY).height = 34;
-  const lr = (n: number, label: string, color: string, state: string, srcRow: number | null, rating: { ratingA?: number } & Parameters<typeof breakerLabel>[0], note: string, loading: boolean) => {
+  const lr = (n: number, label: string, color: string, normal: SwitchLike, fail: SwitchLike, srcRow: number, rating: Parameters<typeof breakerLabel>[0], note: string, loading: boolean) => {
     const r = SUMMARY + n;
     bar(r, color);
-    ws.getCell(r, 2).value = label; ws.getCell(r, 5).value = state; ws.getCell(r, 5).alignment = { horizontal: "center" };
-    if (srcRow !== null) {
-      for (const [col, ci] of [["J", 10], ["K", 11], ["M", 13]] as const) { const c = ws.getCell(r, ci); c.value = { formula: `${col}${srcRow}` } as ExcelJS.CellValue; c.numFmt = "#,##0"; }
-    }
+    ws.getCell(r, 2).value = label;
+    for (const [ci, st] of [[5, normal], [6, fail]] as const) { const c = ws.getCell(r, ci); c.value = st; c.fill = stateFill(st); c.alignment = { horizontal: "center" }; }
+    for (const [col, ci] of [["J", 10], ["K", 11], ["M", 13]] as const) { const c = ws.getCell(r, ci); c.value = { formula: `${col}${srcRow}` } as ExcelJS.CellValue; c.numFmt = "#,##0"; }
     ws.getCell(r, 14).value = rating.ratingA ? breakerLabel(rating) : "Not calculated";
     ws.getCell(r, 15).value = note;
     ws.getCell(r, 17).value = rating.ratingA ?? null; ws.getCell(r, 17).numFmt = "#,##0";
-    if (loading && srcRow !== null) {
-      const c = ws.getCell(r, 18);
-      c.value = { formula: `IF(N(Q${r})>0,M${r}/Q${r},"")` } as ExcelJS.CellValue; c.numFmt = "0.0%";
-      c.fill = fill(WITHIN); // green; red when over 100 % (conditional format below)
-    }
+    if (loading) { const c = ws.getCell(r, 18); c.value = { formula: `IF(N(Q${r})>0,M${r}/Q${r},"")` } as ExcelJS.CellValue; c.numFmt = "0.0%"; c.fill = fill(WITHIN); }
   };
-  lr(1, "Incomer 1", INCOMER, "ON", inc1, imcc.incomer1, `From the Incomer 1 section's working load (limit ${set.maxIncomerA} A).`, true);
-  lr(2, "Incomer 2", INCOMER, "OFF", inc2, imcc.incomer2, "Design rating equals Incomer 1 (rule); loading is against that rating.", true);
-  lr(3, "Bus coupler", COUPLER, "OFF", null, imcc.coupler, "Design rating equals Incomer 1 (rule). Stays OFF in normal operation.", false);
-  ws.addConditionalFormatting({
-    ref: `R${SUMMARY + 1}:R${SUMMARY + 2}`,
-    rules: [{ type: "cellIs", operator: "greaterThan", formulae: [1], priority: 1, style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: OVER } } } }],
+  lr(1, "Incomer 1", INCOMER, "ON", "OFF", inc1, imcc.incomer1, "Carries the whole IMCC in the normal state.", true);
+  lr(2, "Incomer 2", INCOMER, "OFF", "ON", inc1, imcc.incomer2, "Takes over the whole IMCC (with the bus coupler) if Incomer 1 is unhealthy: same rating as Incomer 1.", true);
+  lr(3, "Bus coupler", COUPLER, "OFF", "ON", inc1, imcc.coupler, "Switched ON together with Incomer 2: same rating as Incomer 1.", true);
+  const cf = (ref: string, priority: number) => ws.addConditionalFormatting({
+    ref, rules: [{ type: "cellIs", operator: "greaterThan", formulae: [limit], priority, style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: OVER } } } }],
   });
-  ws.getCell(SUMMARY + 4, 2).value = "Both sections summed (information only: the two sections are not supplied together)";
-  for (const [col, ci] of [["J", 10], ["K", 11]] as const) { const c = ws.getCell(SUMMARY + 4, ci); c.value = { formula: `${col}${inc1}+${col}${inc2}` } as ExcelJS.CellValue; c.numFmt = "#,##0"; c.font = F({ bold: true }); }
+  cf(`R${SUMMARY + 1}:R${SUMMARY + 3}`, 1);
+  ws.getCell(SUMMARY + 4, 2).value = `Loading limit: ${(limit * 100).toFixed(0)} % of the rating (${imcc.incomer1.kind === "EDO ACB" ? "ACB maximum loading" : "MCCB: 100 %"}). Red = above the limit.`;
   ws.getCell(SUMMARY + 4, 2).font = F({ italic: true });
 
   // ---- legend ----
   ws.getCell(LEGEND, 1).value = "Colours"; ws.getCell(LEGEND, 1).font = F({ bold: true });
-  ([["Incomer", INCOMER], ["Bus coupler", COUPLER], ["W", kind("W")!], ["S", kind("S")!], ["SP (spare)", SPARE], ["DOL / SS", kind("DOL")!], ["VFD", kind("VFD")!], ["Feeder", kind("Feeder")!], ["Within limit", WITHIN], ["Over limit", OVER]] as [string, string][]).forEach(([t, color], i) => {
+  ([["Incomer", INCOMER], ["Bus coupler", COUPLER], ["ON", WITHIN], ["OFF", OVER], ["W", kind("W")!], ["S", kind("S")!], ["SP (spare)", SPARE], ["DOL / SS", kind("DOL")!], ["VFD", kind("VFD")!], ["Feeder", kind("Feeder")!]] as [string, string][]).forEach(([t, color], i) => {
     const c = ws.getCell(LEGEND, 2 + i); c.value = t; c.fill = fill(color); c.border = BORDER; c.font = F({ bold: true }); c.alignment = { horizontal: "center" };
   });
 
-  // ---- bus layout: incomer 1 | loads 1 | bus coupler | loads 2 | incomer 2 ----
+  // ---- panel: INC 1 | loads | INC 2 | BC ----
   head(HEAD, ["S. NO.", "Load description", "kW", "Current entered (A)", "W / S / SP", "Method of starting", "Group", "Current (A)", "kVA",
     "Working kVA", "Working current (A)", `LCE kVA (x ${LCE_FACTOR})`, "Design current (A)", "Calculated breaker", "Notes / feeder description", "Status as entered", "Rating (A)", "Loading (% of rating)"]);
   ws.getRow(HEAD).height = 34;
-
-  const incomerRow = (r: number, n: 1 | 2, sec: typeof s1, first: number, last: number, rating: typeof imcc.incomer1) => {
-    bar(r, INCOMER);
-    ws.getCell(r, 1).value = `INC ${n}`;
-    ws.getCell(r, 2).value = `Incomer ${n} – supplied from ${feeder(n)}`;
-    ws.getCell(r, 5).value = n === 1 ? "ON" : "OFF"; ws.getCell(r, 5).alignment = { horizontal: "center" };
+  const totalsRow = (r: number, label: string, tag: string, st: SwitchLike, rating: Parameters<typeof breakerLabel>[0], color: string, note: string, sums: boolean) => {
+    bar(r, color);
+    ws.getCell(r, 1).value = tag;
+    ws.getCell(r, 2).value = label;
+    ws.getCell(r, 5).value = st; ws.getCell(r, 5).fill = stateFill(st); ws.getCell(r, 5).alignment = { horizontal: "center" };
     for (const [col, ci] of [["J", 10], ["K", 11], ["L", 12]] as const) {
-      const c = ws.getCell(r, ci); c.value = (last >= first ? { formula: `SUM(${col}${first}:${col}${last})` } : 0) as ExcelJS.CellValue; c.numFmt = "#,##0";
+      const c = ws.getCell(r, ci);
+      c.value = (sums ? (last >= first ? { formula: `SUM(${col}${first}:${col}${last})` } : 0) : { formula: `${col}${inc1}` }) as ExcelJS.CellValue; c.numFmt = "#,##0";
     }
-    ws.getCell(r, 13).value = { formula: `K${r}*${mult}` } as ExcelJS.CellValue; ws.getCell(r, 13).numFmt = "#,##0";
-    ws.getCell(r, 14).value = sec.workingA > 0 || n === 2 ? (rating.ratingA ? breakerLabel(rating) : "") : "";
-    ws.getCell(r, 15).value = n === 1 ? "Totals of the loads below, calculated rating from the working load." : "Totals of the loads above; design rating equals Incomer 1.";
+    ws.getCell(r, 13).value = { formula: `K${r}*${N.mult}` } as ExcelJS.CellValue; ws.getCell(r, 13).numFmt = "#,##0";
+    ws.getCell(r, 14).value = rating.ratingA ? breakerLabel(rating) : "";
+    ws.getCell(r, 15).value = note;
     ws.getCell(r, 17).value = rating.ratingA ?? null; ws.getCell(r, 17).numFmt = "#,##0";
-    const c = ws.getCell(r, 18); c.value = { formula: `IF(N(Q${r})>0,M${r}/Q${r},"")` } as ExcelJS.CellValue; c.numFmt = "0.0%";
+    const c = ws.getCell(r, 18); c.value = { formula: `IF(N(Q${r})>0,M${r}/Q${r},"")` } as ExcelJS.CellValue; c.numFmt = "0.0%"; c.fill = fill(WITHIN);
   };
-  incomerRow(inc1, 1, s1, first1, last1, imcc.incomer1);
-  s1.loads.forEach((x, n) => writeLoad(ws, first1 + n, x));
-  bar(coup, COUPLER);
-  ws.getCell(coup, 1).value = "BC";
-  ws.getCell(coup, 2).value = "Bus coupler between Incomer 1 and Incomer 2 sections";
-  ws.getCell(coup, 5).value = "OFF"; ws.getCell(coup, 5).alignment = { horizontal: "center" };
-  ws.getCell(coup, 14).value = imcc.coupler.ratingA ? breakerLabel(imcc.coupler) : "";
-  ws.getCell(coup, 15).value = "Design rating equals Incomer 1 (rule). Stays OFF in normal operation.";
-  ws.getCell(coup, 17).value = imcc.coupler.ratingA ?? null; ws.getCell(coup, 17).numFmt = "#,##0";
-  s2.loads.forEach((x, n) => writeLoad(ws, first2 + n, x));
-  incomerRow(inc2, 2, s2, first2, last2, imcc.incomer2);
-  ws.addConditionalFormatting({
-    ref: `R${inc1}:R${inc2}`,
-    rules: [{ type: "cellIs", operator: "greaterThan", formulae: [1], priority: 2, style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: OVER } } } }],
-  });
-  for (const r of [inc1, inc2]) ws.getCell(r, 18).fill = fill(WITHIN);
+  totalsRow(inc1, `Incomer 1 – supplied from ${feeder(1)}`, "INC 1", "ON", imcc.incomer1, INCOMER, "Beginning of the panel. Totals of the loads below; rating from the working load of the whole IMCC.", true);
+  bus.loads.forEach((x, n) => writeLoad(ws, first + n, x));
+  totalsRow(inc2, `Incomer 2 – supplied from ${feeder(2)}`, "INC 2", "OFF", imcc.incomer2, INCOMER, "Other end of the panel, next to the bus coupler. Same totals and rating as Incomer 1.", false);
+  totalsRow(coup, "Bus coupler (side by side with Incomer 2)", "BC", "OFF", imcc.coupler, COUPLER, "Switched ON with Incomer 2 if Incomer 1 is unhealthy; interlock: Incomer 1 OFF first. Same rating as Incomer 1.", false);
+  cf(`R${inc1}:R${coup}`, 2);
 
-  let row = inc2 + 2;
+  let row = coup + 2;
   for (const i of imcc.issues) { ws.getCell(row, 2).value = `Check: ${i.message}`; ws.getCell(row, 2).font = F({ color: { argb: "FF7F6000" } }); row++; }
   ws.views = [{ showGridLines: false }];
 }
+
+type SwitchLike = typeof NORMAL_STATE.incomer1;
+void FAILOVER_STATE;
 
 function writeLoad(ws: ExcelJS.Worksheet, r: number, x: LoadResult) {
   const l = x.load;
@@ -255,7 +244,7 @@ function buildNotes(ws: ExcelJS.Worksheet, set: ImccDesignSet, a: MccAssumptions
   ["Assumption", "Value", "Used for"].forEach((t, i) => { const c = ws.getCell(3, i + 1); c.value = t; c.font = F({ bold: true }); c.fill = fill(HEADER); c.border = BORDER; });
   const calcVolt = Math.round(set.voltageV) === 433 ? a.calcVoltage433 : set.voltageV;
   const rows: [string, number, string, string?][] = [
-    ["Power factor, general / power feeder", a.pfGeneral, "Current of PWR FDR rows given in kW."],
+    ["Power factor, general / power feeder", a.pfGeneral, "Current of Feeder rows given in kW."],
     ["Power factor, DOL / RDOL / SS", a.pfDol, "Current of DOL, RDOL and soft-starter (SS) motors given in kW."],
     ["Power factor, VFD", a.pfVfd, "Current of VFD motors given in kW."],
     ["Motor efficiency, DOL / RDOL / SS (provisional)", a.efficiency, "Applied to DOL, RDOL and SS motors given in kW only.", "0%"],
@@ -270,11 +259,11 @@ function buildNotes(ws: ExcelJS.Worksheet, set: ImccDesignSet, a: MccAssumptions
     for (let c = 1; c <= 3; c++) { ws.getCell(r, c).border = BORDER; ws.getCell(r, c).font = F(); }
   });
   const text: [string, string][] = [
-    ["Design script", `Working loads in list order fill bus sections until a section's design current would exceed ${set.maxIncomerA} A; the next load starts a new section. Two sections make one IMCC, so the number of IMCCs follows from the loads.`],
+    ["Design script", `Working loads in list order fill an IMCC until its design current would exceed ${set.maxDesignA.toFixed(0)} A (${set.maxIncomerA} A ACB at ${(set.acbMaxLoading * 100).toFixed(0)} % maximum loading, adjustable in the application); the next load starts a new IMCC, so the number of IMCCs follows from the loads.`],
     ["Status", "W and w = working (counted, used for the design). S = standby and Spare (SP) are kept with their group's section but not counted."],
-    ["Operating philosophy", "Exactly one IMCC incomer is ON at a time; the other incomer and the bus coupler stay OFF. One incomer is never assumed to supply both sections through the coupler."],
-    ["Incomer ratings", "Incomer 1 = calculated from its own section's working load. Incomer 2 and the bus coupler = Incomer 1's calculated design rating (calculated, not nameplate or installed-device ratings)."],
-    ["Automatic PMCC feeders", "When the switch is ON, each incomer is an outgoing feeder of the PMCC load list (Incomer 1 = W, Incomer 2 = S, same group). When OFF the IMCC design is independent."],
+    ["Operating philosophy", "Panel: Incomer 1 at the beginning; Incomer 2 and the bus coupler side by side at the other end. Normal: Incomer 1 ON, Incomer 2 and bus coupler OFF. Incomer 1 unhealthy: Incomer 2 and bus coupler both ON, with an interlock that switches Incomer 1 OFF first. ON is shown light green, OFF light red."],
+    ["Incomer ratings", "Incomer 1, Incomer 2 and the bus coupler each carry the whole IMCC, so they have the same calculated design rating (calculated, not nameplate or installed-device ratings). An ACB is loaded at most to the maximum loading above."],
+    ["Automatic PMCC feeders", "When the switch is ON, each incomer is an outgoing feeder of the PMCC load list (Incomer 1 = W, Incomer 2 = S, same group, each with the IMCC working current). When OFF the IMCC design is independent."],
     ["Soft starter (SS)", "Calculated like a DOL motor (assumption, OPEN_ITEMS.md)."],
     ["Reference workbook", "The layout follows the supplied ECR-9 / ECR-10 sheets. Their current formula (415 V, 1.73) is not used: this application's conventions are."],
     ["Open items", "See OPEN_ITEMS.md."],
