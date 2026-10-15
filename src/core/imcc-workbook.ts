@@ -112,7 +112,7 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
     ["Design basis", `Working (W / w) loads only. Limit ${set.maxDesignA.toFixed(0)} A design current: ${set.maxIncomerA} A ACB at ${(set.acbMaxLoading * 100).toFixed(0)} % maximum loading. Voltage ${set.voltageV} V.`],
     ["Incomer 1 supplied from", feeder(1)],
     ["Incomer 2 supplied from", feeder(2)],
-    ["Panel order", "Incomer 1 at the beginning; Incomer 2 and the bus coupler side by side at the other end."],
+    ["Panel order", "Incomer 1 at the beginning; at the other end the bus coupler, with Incomer 2 below it."],
     ["Operating philosophy", "Normal: Incomer 1 ON, Incomer 2 and bus coupler OFF. Incomer 1 unhealthy: Incomer 2 and bus coupler both ON, interlocked so Incomer 1 is switched OFF first."],
   ];
   info.forEach(([k, v], i) => {
@@ -127,15 +127,15 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
   });
   const bar = (r: number, color: string, bold = true) => { for (let c = 1; c <= COLS; c++) { const cell = ws.getCell(r, c); cell.fill = fill(color); cell.border = BORDER; cell.font = F({ bold }); cell.alignment = { vertical: "middle", wrapText: c === 2 || c === 15 }; } };
 
-  // ---- row positions: INC 1 | loads | INC 2 | BC (known first: the loading block refers to them) ----
+  // ---- row positions: INC 1 | loads | BC | INC 2 (known first: the loading block refers to them) ----
   const SUMMARY = 12; // header row of the loading block
   const LEGEND = 17;
   const HEAD = 20;
   const bus = imcc.bus;
   const inc1 = HEAD + 1;
   const first = inc1 + 1, last = first + bus.loads.length - 1;
-  const inc2 = last + 1;
-  const coup = inc2 + 1;
+  const coup = last + 1; // the bus coupler above Incomer 2
+  const inc2 = coup + 1;
   const limit = imcc.loadingLimit;
 
   // ---- loading block ----
@@ -154,8 +154,8 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
     if (loading) { const c = ws.getCell(r, 18); c.value = { formula: `IF(N(Q${r})>0,M${r}/Q${r},"")` } as ExcelJS.CellValue; c.numFmt = "0.0%"; c.fill = fill(WITHIN); }
   };
   lr(1, "Incomer 1", INCOMER, "ON", "OFF", inc1, imcc.incomer1, "Carries the whole IMCC in the normal state.", true);
-  lr(2, "Incomer 2", INCOMER, "OFF", "ON", inc1, imcc.incomer2, "Takes over the whole IMCC (with the bus coupler) if Incomer 1 is unhealthy: same rating as Incomer 1.", true);
-  lr(3, "Bus coupler", COUPLER, "OFF", "ON", inc1, imcc.coupler, "Switched ON together with Incomer 2: same rating as Incomer 1.", true);
+  lr(2, "Bus coupler", COUPLER, "OFF", "ON", inc1, imcc.coupler, "Switched ON together with Incomer 2: same rating as Incomer 1.", true);
+  lr(3, "Incomer 2", INCOMER, "OFF", "ON", inc1, imcc.incomer2, "Takes over the whole IMCC (with the bus coupler) if Incomer 1 is unhealthy: same rating as Incomer 1.", true);
   const cf = (ref: string, priority: number) => ws.addConditionalFormatting({
     ref, rules: [{ type: "cellIs", operator: "greaterThan", formulae: [limit], priority, style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: OVER } } } }],
   });
@@ -169,7 +169,7 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
     const c = ws.getCell(LEGEND, 2 + i); c.value = t; c.fill = fill(color); c.border = BORDER; c.font = F({ bold: true }); c.alignment = { horizontal: "center" };
   });
 
-  // ---- panel: INC 1 | loads | INC 2 | BC ----
+  // ---- panel: INC 1 | loads | BC | INC 2 ----
   head(HEAD, ["S. NO.", "Load description", "kW", "Current entered (A)", "W / S / SP", "Method of starting", "Group", "Current (A)", "kVA",
     "Working kVA", "Working current (A)", `LCE kVA (x ${LCE_FACTOR})`, "Design current (A)", "Calculated breaker", "Notes / feeder description", "Status as entered", "Rating (A)", "Loading (% of rating)"]);
   ws.getRow(HEAD).height = 34;
@@ -190,9 +190,9 @@ function buildImccSheet(ws: ExcelJS.Worksheet, imcc: ImccDesign, set: ImccDesign
   };
   totalsRow(inc1, `Incomer 1 – supplied from ${feeder(1)}`, "INC 1", "ON", imcc.incomer1, INCOMER, "Beginning of the panel. Totals of the loads below; rating from the working load of the whole IMCC.", true);
   bus.loads.forEach((x, n) => writeLoad(ws, first + n, x));
-  totalsRow(inc2, `Incomer 2 – supplied from ${feeder(2)}`, "INC 2", "OFF", imcc.incomer2, INCOMER, "Other end of the panel, next to the bus coupler. Same totals and rating as Incomer 1.", false);
-  totalsRow(coup, "Bus coupler (side by side with Incomer 2)", "BC", "OFF", imcc.coupler, COUPLER, "Switched ON with Incomer 2 if Incomer 1 is unhealthy; interlock: Incomer 1 OFF first. Same rating as Incomer 1.", false);
-  cf(`R${inc1}:R${coup}`, 2);
+  totalsRow(coup, "Bus coupler (above Incomer 2)", "BC", "OFF", imcc.coupler, COUPLER, "Switched ON with Incomer 2 if Incomer 1 is unhealthy; interlock: Incomer 1 OFF first. Same rating as Incomer 1.", false);
+  totalsRow(inc2, `Incomer 2 – supplied from ${feeder(2)}`, "INC 2", "OFF", imcc.incomer2, INCOMER, "Other end of the panel, below the bus coupler. Same totals and rating as Incomer 1.", false);
+  cf(`R${inc1}:R${inc2}`, 2);
 
   let row = coup + 2;
   for (const i of imcc.issues) { ws.getCell(row, 2).value = `Check: ${i.message}`; ws.getCell(row, 2).font = F({ color: { argb: "FF7F6000" } }); row++; }

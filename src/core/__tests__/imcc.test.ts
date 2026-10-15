@@ -308,7 +308,7 @@ describe("Excel output", () => {
     ...many(2),
   ];
   const argbOf = (c: ExcelJS.Cell) => (c.fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
-  it("panel order INC 1 | loads | INC 2 | BC (side by side); ON green, OFF light red; the app's colours; spare as SP; ratings equal the selected ACB; Feeder, not PWR FDR", async () => {
+  it("panel order INC 1 | loads | BC | INC 2 (bus coupler above Incomer 2); ON green, OFF light red; the app's colours; spare as SP; ratings equal the selected ACB; Feeder, not PWR FDR", async () => {
     for (const acb of [1000, 1250]) {
       const set = designImccs(loads(), DEFAULT_MCC_ASSUMPTIONS, { maxIncomerA: acb });
       for (const linked of [true, false]) {
@@ -323,8 +323,8 @@ describe("Excel output", () => {
         const rowOf = (m: string) => { let n = 0; ws.eachRow((r) => { if (r.getCell(1).value === m) n = r.number; }); return n; };
         const [inc1, inc2, bc] = [rowOf("INC 1"), rowOf("INC 2"), rowOf("BC")];
         expect(inc1).toBeGreaterThan(0);
-        expect(inc2).toBeGreaterThan(inc1 + 1); // loads in between
-        expect(bc).toBe(inc2 + 1); // Incomer 2 and the bus coupler side by side at the end
+        expect(bc).toBeGreaterThan(inc1 + 1); // loads in between
+        expect(inc2).toBe(bc + 1); // the bus coupler above Incomer 2, together at the end
         expect(argbOf(ws.getRow(inc1).getCell(3))).toBe("FF80DEEA");
         expect(argbOf(ws.getRow(inc2).getCell(3))).toBe("FF80DEEA");
         expect(argbOf(ws.getRow(bc).getCell(3))).toBe("FFFFF9C4");
@@ -333,7 +333,7 @@ describe("Excel output", () => {
         expect(state(inc2)).toEqual(["OFF", "FFFFC7CE"]);
         expect(state(bc)).toEqual(["OFF", "FFFFC7CE"]);
         const fills: Record<string, string | undefined> = {};
-        ws.eachRow((r) => { const v = r.getCell(5).value; if (r.number > inc1 && r.number < inc2 && typeof v === "string") fills[v] = argbOf(r.getCell(5)); });
+        ws.eachRow((r) => { const v = r.getCell(5).value; if (r.number > inc1 && r.number < bc && typeof v === "string") fills[v] = argbOf(r.getCell(5)); });
         expect(fills).toEqual({ W: "FFDEB1FB", S: "FFFBB1DE", SP: "FFFFD966" });
         expect([inc1, inc2, bc].map((r) => ws.getRow(r).getCell(17).value)).toEqual([acb, acb, acb]);
         const sums: string[] = [];
@@ -342,7 +342,7 @@ describe("Excel output", () => {
         // the loading block: Normal / Incomer 1 unhealthy columns
         const block: [unknown, unknown, unknown][] = [];
         ws.eachRow((r) => { const k = r.getCell(2).value; if (r.number < 20 && (k === "Incomer 1" || k === "Incomer 2" || k === "Bus coupler")) block.push([k, r.getCell(5).value, r.getCell(6).value]); });
-        expect(block).toEqual([["Incomer 1", "ON", "OFF"], ["Incomer 2", "OFF", "ON"], ["Bus coupler", "OFF", "ON"]]);
+        expect(block).toEqual([["Incomer 1", "ON", "OFF"], ["Bus coupler", "OFF", "ON"], ["Incomer 2", "OFF", "ON"]]);
       }
     }
   });
