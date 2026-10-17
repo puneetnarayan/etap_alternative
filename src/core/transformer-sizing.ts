@@ -1,7 +1,7 @@
 /**
  * Transformer count / rating selection for a load list (see docs/transformer-sizing.md).
  *
- * Units: volts (V), amps (A), kW, kVA. All loads are counted at 100 % (standby included).
+ * Units: volts (V), amps (A), kW, kVA. Working loads are counted at 100 %; standby (S) rows are not counted (they are listed as excluded).
  */
 
 import { fmtInt, fmtPct } from "./format";
@@ -159,6 +159,8 @@ const kvarOf = (kw: number, kva: number) => Math.sqrt(Math.max(kva * kva - kw * 
 /** Three-phase current (A) for kVA at line voltage V. */
 export const currentOf = (kva: number, volts: number) => (kva * 1000) / (SQRT3 * volts);
 const VOLTAGE_MATCH_TOLERANCE = 0.01;
+/** Message of a standby row left out of the calculation. */
+export const STANDBY_NOT_COUNTED = "Standby (S): not counted in the calculation (only working loads are sized).";
 
 function normaliseType(raw: string): LoadType | "UNKNOWN" {
   const t = raw.toUpperCase().replace(/[^A-Z]/g, "");
@@ -183,6 +185,8 @@ export function sizeLoad(
     issue: { rowNumber: row.rowNumber, description: row.description, severity, message },
   });
   const warnings: string[] = [];
+  // Standby (S) is not part of the calculation: it would add transformers that are not needed.
+  if (row.status === "S") return fail("excluded", STANDBY_NOT_COUNTED);
   if (row.statusText) warnings.push(`Working/standby value "${row.statusText}" not recognised (use W or S).`);
 
   if (row.badFields?.length) return fail("error", `Could not read a number in: ${row.badFields.join(", ")}.`);

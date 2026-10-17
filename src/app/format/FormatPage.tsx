@@ -13,7 +13,7 @@ type Kind = "PMCC" | "IMCC";
 const COLUMNS: Record<Kind, { name: string; need: string; text: string }[]> = {
   PMCC: [
     { name: "Description", need: "Required", text: "Name of the load or feeder." },
-    { name: "W/S", need: "Optional", text: "W or w = working, S = standby. Blank: the load is counted without a W/S tag. All loads count at 100 % for the transformer sizing, standby included. (\"Spare\" is not recognised in the PMCC list.)" },
+    { name: "W/S", need: "Optional", text: "W or w = working, S = standby. Blank: the load is counted without a W/S tag. Only working loads are counted for the transformer sizing: standby (S) rows are not counted (they are listed as excluded). (\"Spare\" is not recognised in the PMCC list.)" },
     { name: "Type (RDOL/DOL/VFD/SS/Feeder)", need: "Required", text: "DOL, RDOL, SS (soft starter, calculated like DOL), VFD or Feeder. kW motors use pf 0.7 (DOL / RDOL / SS), 0.9 (VFD) and the motor efficiency; amps-only rows are feeders at pf 0.7." },
     { name: "Amps rating (A)", need: "Amps or kW", text: "Entered current. When given it is used in preference to a current calculated from kW." },
     { name: "kW rating (kW)", need: "Amps or kW", text: "Motor or load power. The current is calculated from it when no amps are given (the MCC and BOM tabs show it in a \"Calculated current\" column)." },

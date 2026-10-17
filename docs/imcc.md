@@ -53,7 +53,7 @@ So Incomer 1, Incomer 2 and the bus coupler each carry the **whole IMCC** and ha
 
 ## Generated PMCC feeders (`imccFeederRows`)
 
-Two rows per IMCC with a working load, one for each incomer: `IMCC-01 Incomer 1`, `IMCC-01 Incomer 2`, Type Feeder, Amps = the IMCC's working current, 433 V. **Incomer 1 = W, Incomer 2 = S** (only one carries the IMCC at a time; the transformer sizing counts the standby one too, for sizing only), both with the IMCC tag as **group**, so the sizing places them on different transformer sections. Sized from the working current, not from the ACB rating.
+Two rows per IMCC with a working load, one for each incomer: `IMCC-01 Incomer 1`, `IMCC-01 Incomer 2`, Type Feeder, Amps = the IMCC's working current, 433 V. **Incomer 1 = W, Incomer 2 = S** (only one carries the IMCC at a time; the transformer sizing counts only the working one: the standby feeder is listed but not counted), both with the IMCC tag as **group**, so the sizing places them on different transformer sections. Sized from the working current, not from the ACB rating.
 
 ## Output design (display and Excel)
 

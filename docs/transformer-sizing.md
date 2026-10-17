@@ -5,7 +5,7 @@ Source: the user's load-distribution brief (Rev 0) plus follow-up answers. Code:
 ## Inputs
 Excel `.xlsx`, first sheet, header row required (column order does not matter):
 Description · Type (DOL / VFD / Feeder) · Amps rating · kW rating · Voltage level (433 or 690 V).
-Optional: **Working/Standby (W/S)** column (any header containing "working", "standby" or "duty", or "W/S"; values W / Working / Duty or S / Standby), shown as W or S in the results and report. Standby loads count at 100 % like working loads.
+Optional: **Working/Standby (W/S)** column (any header containing "working", "standby" or "duty", or "W/S"; values W / Working / Duty or S / Standby), shown as W or S in the results and report. **Only working loads are counted: standby (S) rows are left out of the calculation** (they would add transformers that are not needed) and are listed as excluded ("Standby (S): not counted in the calculation") in the Issues list and sheet. The MCC and BOM tabs still select a breaker for every row.
 Optional: **Duty/standby group** (any header containing "group" or "pair"): loads with the same group name are placed on different transformers' bus sections.
 Sample: `public/PMCC_sample_load_list.xlsx` is the file users download from the page (supplied by the project owner; replace the file to change it). The tests for it are in `src/core/__tests__/public-sample.test.ts`. The earlier hand-built small plant is kept only as a test fixture, `src/core/__tests__/fixtures/small_plant_load_list.xlsx`.
 
@@ -22,7 +22,7 @@ Radio buttons choose the voltage level: **433 V**, **690 V**, and **Both** (only
 
 **Voltage for amps-only loads:** loads at the 433 V level are converted at **433 V** (kVA = √3 × 433 × A ÷ 1000), loads at 690 V at 690 V. This was 420 V earlier; calculations now use the nominal voltage even where a project document says 415 V or 420 V. The voltage used at the 433 V level is an editable assumption on the page (and `calculationVoltageV` in the options: a level not listed uses its own value).
 kvar = input kW × tan(arccos pf), so kVA² = kW² + kvar². For amps-only loads kW = kVA × pf.
-If kW is given, any amps value on the same row is ignored. All loads count at 100 % (standby included).
+If kW is given, any amps value on the same row is ignored. Working loads count at 100 %; standby (S) rows are not counted.
 Rows whose voltage differs from the selected transformer are excluded (listed on screen); a blank voltage is assumed to match, with a warning.
 
 ## Transformer selection

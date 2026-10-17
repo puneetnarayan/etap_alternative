@@ -34,7 +34,8 @@ describe("Excel report", () => {
     expect(find(s, "Total kVA used for sizing")![1] as number).toBeCloseTo(result.totalKva, 6);
     expect(find(s, "Total kW (input)")![1] as number).toBeCloseTo(result.totals.kw, 6);
     expect(find(s, "Total kvar")![1] as number).toBeCloseTo(result.totals.kvar, 6);
-    expect(find(s, "Working (W) / standby (S)")![1]).toBe("12 W / 2 S");
+    expect(find(s, "Working (W) loads")![1]).toBe("12");
+    expect(find(s, "Standby (S) rows not counted")![1]).toBe(2);
     expect(find(s, "Total kVA, vector sum")).toBeUndefined();
     expect(find(s, "Incomers")![1]).toBe(3);
     expect(find(s, "Bus couplers")![1]).toBe(2);
@@ -82,14 +83,17 @@ describe("Excel report", () => {
     const rows = sheets["Loads"];
     const col = (rows[0] as string[]).indexOf("W/S");
     const values = rows.slice(1, -1).map((r) => r[col]);
-    expect(values.filter((v) => v === "S")).toHaveLength(2);
+    expect(values.filter((v) => v === "S")).toHaveLength(0); // standby rows are not counted, so they are not on the Loads sheet
     expect(values.filter((v) => v === "W")).toHaveLength(12);
   });
 
   it("issues sheet lists the excluded 690 V rows", async () => {
     const { sheets } = await report(true);
     const issues = sheets["Issues"];
-    expect(issues.filter((r) => r[2] === "Excluded")).toHaveLength(2);
+    const excluded = issues.filter((r) => r[2] === "Excluded");
+    expect(excluded).toHaveLength(4); // the two 690 V rows and the two standby rows
+    expect(excluded.filter((r) => /Standby \(S\)/.test(String(r[3])))).toHaveLength(2);
+    expect(excluded.filter((r) => /690 V/.test(String(r[3])))).toHaveLength(2);
   });
 });
 
@@ -234,19 +238,19 @@ describe("Excel report formatting", () => {
   });
 
   it("cells over a limit are light red, so the two states are never confused", async () => {
-    // 2 x 2000 kVA forced: 3,471.6 kVA is 86.8 % normal (> 80) and 173.6 % one out (> 90); 3 is added and fits
+    // 2 x 2000 kVA forced: 2,952.8 kVA (working loads only) is 73.8 % normal (<= 80, within) but 147.6 % one out (> 90, over); 3 is added and fits
     const { byName } = await sheetsFor({ ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] });
     const sum = byName["Summary"].data;
     const row2 = sum.find((r) => val(r[0]) === 2 && val(r[1]) === "2")!;
-    expect([row2[3], row2[6], row2[7]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.over, REPORT_COLORS.over]);
+    expect([row2[3], row2[6], row2[7]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.within, REPORT_COLORS.over]);
     expect(val(row2[3])).toBe("No");
     const row3 = sum.find((r) => val(r[0]) === 3 && val(r[1]) === "3")!;
     expect([row3[3], row3[6], row3[7]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
     const two = byName["2 Transformers"].data;
     expect(bg(two[1][0])).toBe(REPORT_COLORS.over); // "DOES NOT FIT"
     const t1 = two.find((r) => val(r[0]) === "T1" && r.length === 7)!;
-    expect(bg(t1[5])).toBe(REPORT_COLORS.over);
-    expect(val(t1[6])).toBe("No");
+    expect(bg(t1[5])).toBe(REPORT_COLORS.within); // each section ~73.8 % <= 80 %
+    expect(val(t1[6])).toBe("Yes");
     const oo = two[two.findIndex((r) => val(r[0]) === "Transformer out") + 1];
     expect(bg(oo[3])).toBe(REPORT_COLORS.over);
     expect(val(oo[4])).toBe("Over limit");
@@ -491,7 +495,7 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
       const kind = l.kind === "feeder" ? "Feeder" : l.type;
       expect(st(r[treated])!.backgroundColor, `treated as row ${l.rowNumber}`).toBe(bgOf(kind));
     });
-    expect(new Set(body.map((r) => st(r[ws])!.backgroundColor))).toEqual(new Set([NEW.W, NEW.S])); // both shades occur
+    expect(new Set(body.map((r) => st(r[ws])!.backgroundColor))).toEqual(new Set([NEW.W])); // only working loads are counted
     expect(new Set(body.map((r) => st(r[treated])!.backgroundColor))).toEqual(new Set([NEW.DOL, NEW.VFD, NEW.Feeder]));
     // bus layout: outgoing-load rows carry the same shading
     const three = sheets.find((x) => x.sheet === "3 Transformers")!.data;

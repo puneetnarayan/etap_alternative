@@ -198,7 +198,7 @@ describe("the Automatic PMCC feeders switch: generated incomer feeders", () => {
     expect(out[0]).toEqual(["Description", "Type", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)", "W/S", "Duty/standby group"]);
     expect(out[2]).toEqual(["IMCC-01 Incomer 1", "Feeder", 600, null, 433, "W", "IMCC-01"]);
   });
-  it("switch ON: the transformer sizing is recalculated with the incomers (number of transformers may change); the two incomers of an IMCC go on different sections; OFF: unchanged", () => {
+  it("switch ON: the transformer sizing is recalculated with the working incomer feeder (number of transformers may change); the standby Incomer 2 feeder is not counted; OFF: unchanged", () => {
     const base = [["Description", "W/S", "Type (DOL/VFD/Feeder)", "Amps rating (A)", "kW rating (kW)", "Voltage level (V)", "Duty/standby group"],
       ...Array.from({ length: 10 }, (_, n) => [`Fdr ${n + 1}`, "W", "Feeder", 467, null, 433, null])];
     const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
@@ -206,12 +206,14 @@ describe("the Automatic PMCC feeders switch: generated incomer feeders", () => {
     expect(off.recommended?.count).toBe(3); // 3502 kVA <= 3600 kVA
     const two = designImccs([L("a", "W", "Feeder", { a: 350 }), L("b", "W", "Feeder", { a: 350 })]); // design 875 A <= 900 A: one IMCC
     const rows = imccFeederRows(two);
-    expect(rows.map((r) => r.amps)).toEqual([700, 700]);
+    expect(rows.map((r) => [r.description, r.status, r.amps])).toEqual([["IMCC-01 Incomer 1", "W", 700], ["IMCC-01 Incomer 2", "S", 700]]);
     const on = sizeTransformers(parseLoadSheet(appendFeedersToSheet(base, rows) as never).rows, 433, opts);
-    expect(on.totalKva).toBeCloseTo(off.totalKva + 2 * kvaOf(700), 6);
-    expect(on.recommended!.count).toBeGreaterThan(3); // 3502 + 1050 = 4552 kVA > 3600 kVA
-    const placed = on.combos.find((c) => c.count === on.recommended!.count)!.sections;
-    expect(placed.filter((s) => s.loads.some((l) => l.description.startsWith("IMCC-01")))).toHaveLength(2);
+    // only the working Incomer 1 feeder (700 A = 525 kVA) is counted; Incomer 2 (standby) is listed as excluded
+    expect(on.totalKva).toBeCloseTo(off.totalKva + kvaOf(700), 6);
+    expect(on.loads.some((l) => l.description === "IMCC-01 Incomer 1")).toBe(true);
+    expect(on.loads.some((l) => l.description === "IMCC-01 Incomer 2")).toBe(false);
+    expect(on.issues.some((i) => i.severity === "excluded" && i.description === "IMCC-01 Incomer 2" && /Standby \(S\)/.test(i.message))).toBe(true);
+    expect(on.recommended!.count).toBeGreaterThan(3); // 3502 + 525 = 4027 kVA > 3600 kVA
     expect(sizeTransformers(parseLoadSheet(base as never).rows, 433, opts).totalKva).toBe(off.totalKva);
   });
 });

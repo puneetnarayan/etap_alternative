@@ -13,7 +13,7 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 | 7 | The IMCC sample data: 16 of 51 rows have no W/S/Spare status (flagged, not counted); one row has "-" for amps and kW; the amps column is used as given (calculated at which voltage and power factor?). The ECR-9 / ECR-10 sheets were only an example. | Open |
 | 8 | Meaning and applicability of the LCE calculation (working kVA x 0.8). Reported, not used. | Open |
 | 9 | Electrical calculation and regression testing against an independent calculation. | Open |
-| 10 | The standby incomer (Incomer 2) feeder is counted at 100 % in the transformer sizing, for sizing only, as every standby load is. PMCC parsing of `Spare` / `SP` is unchanged (not recognised there). | Confirmed (sizing only) |
+| 10 | Standby (S) rows are not counted in the transformer sizing (PMCC or IMCC): confirmed, they would add transformers that are not needed. They are listed as excluded; the MCC and BOM tabs still select a breaker for them. PMCC parsing of `Spare` / `SP` is unchanged (not recognised there). | Confirmed |
 | 11 | Carried over: BOM Class column logic; soft-starter rule (225 kW or 315 kW); which "yellow cells" need technical review. | Open |
 | 12 | Soft starter (SS) is calculated like a DOL motor (pf 0.7, efficiency 0.93). | Confirmed |
 | 13 | The incomer limit applies to design current (working x 1.25), at most the selected ACB x 90 % (adjustable). | Confirmed (90 % on design current) |
