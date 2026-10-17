@@ -229,7 +229,7 @@ export default function TransformerSizing() {
         </div>
         <p style={{ margin: "4px 0" }}>
           Fixed: maximum loading {fmtPct(DEFAULT_OPTIONS.normalLimit * 100)} % in normal running and {fmtPct(DEFAULT_OPTIONS.contingencyLimit * 100)} % on each remaining
-          transformer with one out. Total kVA is the sum of each load&apos;s kVA. All loads count at 100 %, working (W) and standby (S) alike.
+          transformer with one out. Total kVA is the sum of each load&apos;s kVA. Working (W) loads count at 100 %; standby (S) rows are not counted (listed as excluded).
           Loads given in amps are converted to kVA at the voltage above (690 V loads at 690 V).
         </p>
       </fieldset>
@@ -311,7 +311,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
 
       {result.loads.length > 0 && (
         <>
-          <h4>Loads included ({result.loads.length}: {result.loads.filter((l) => l.status === "W").length} W, {result.loads.filter((l) => l.status === "S").length} S)</h4>
+          <h4>Loads included ({result.loads.length}; standby (S) rows are not counted)</h4>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse" }}>
               <thead><tr>

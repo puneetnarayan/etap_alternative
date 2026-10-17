@@ -102,8 +102,8 @@ export default function ImccDesign() {
 
           <h3>PMCC outgoing feeders generated for the incomers</h3>
           <p style={{ fontSize: 13, margin: "2px 0" }}>
-            Incomer 1 is working (W), Incomer 2 is standby (S): they are alternative sources, never added together as demand. Both carry the IMCC tag as group, so the transformer sizing places them
-            on different transformer sections. Sized from the section&apos;s working current, not from the incomer breaker rating. {autoFeeders ? "The switch is ON: they are in the PMCC load list now." : "The switch is OFF: they are not in the PMCC load list."}
+            Incomer 1 is working (W), Incomer 2 is standby (S): they are alternative sources. The transformer sizing counts only the working feeder (Incomer 1); the standby one is listed in the PMCC list
+            (so its breaker is selected) but not counted. Sized from the IMCC&apos;s working current, not from the incomer breaker rating. {autoFeeders ? "The switch is ON: they are in the PMCC load list now." : "The switch is OFF: they are not in the PMCC load list."}
           </p>
           <table style={{ borderCollapse: "collapse", opacity: autoFeeders ? 1 : 0.5 }}>
             <thead><tr><th style={th}>Outgoing feeder</th><th style={th}>Status</th><th style={th}>Current (A)</th><th style={th}>kVA</th><th style={th}>Group</th></tr></thead>

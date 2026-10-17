@@ -1,7 +1,7 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
 import {
-  currentOf, displayCombos, failureReason, spareKey,
+  STANDBY_NOT_COUNTED, currentOf, displayCombos, failureReason, spareKey,
   type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
 } from "./transformer-sizing";
 
@@ -216,11 +216,12 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kvText("Ratings considered (kVA)", [...op.ratingsKva].sort((x, y) => x - y).join(", ")),
     kv("Voltage used to convert amps to kVA (V)", n(op.calculationVoltageV[r.selectedVoltageV] ?? r.selectedVoltageV)),
     kvText("Total kVA basis", "Arithmetic sum of each load's kVA"),
-    kvText("Load factor", "All loads at 100 % (working W and standby S)"),
+    kvText("Load factor", "Working (W) loads at 100 %; standby (S) is not counted"),
     [],
     blockHeader("Total load"),
     kv("Loads included", cell(r.loads.length)),
-    kv("Working (W) / standby (S)", cell(`${r.loads.filter((l) => l.status === "W").length} W / ${r.loads.filter((l) => l.status === "S").length} S`)),
+    kv("Working (W) loads", cell(`${r.loads.filter((l) => l.status !== "S").length}`)),
+    kv("Standby (S) rows not counted", cell(r.issues.filter((i) => i.message === STANDBY_NOT_COUNTED).length)),
     kv("Spare feeders added (not in the calculation)", cell(r.spares.length)),
     kv(op.mccFeeders.length > 0 ? "Total kVA of the load list (before PMCC/IMCC feeders)" : "Total kVA used for sizing", n(r.totalKva)),
     ...(op.mccFeeders.length > 0

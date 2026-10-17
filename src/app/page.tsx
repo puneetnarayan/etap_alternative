@@ -4,7 +4,7 @@ const pct = (x: number) => `${Math.round(x * 100)} %`;
 
 const STEPS: [string, string][] = [
   ["Collect the load list", "Every load with its description, type (DOL motor, VFD motor or feeder), kW or amps, voltage level and whether it is working or standby."],
-  ["Convert loads to kVA and current", "Motor kW becomes kVA through power factor and efficiency; loads given in amps become kVA at the line voltage. Standby loads are counted at 100 %."],
+  ["Convert loads to kVA and current", "Motor kW becomes kVA through power factor and efficiency; loads given in amps become kVA at the line voltage. Only working loads are counted; standby loads are not."],
   ["Size and arrange the transformers", "Choose the number and rating of transformers, the sets of 2 or 3 with bus couplers, and spread the loads so that each section and each set stays within its limit, also with one transformer out."],
   ["Select the switchgear", "Choose feeder and incomer breakers (MCCB or EDO ACB), overload settings and CT ratios for each MCC or PMCC / IMCC."],
   ["Size the cables", "Cable current capacity, derating and voltage drop for each feeder."],

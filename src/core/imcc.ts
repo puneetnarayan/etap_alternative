@@ -345,7 +345,7 @@ export interface ImccFeederRow {
 /**
  * Two outgoing feeders per IMCC with a working load, one for each incomer. Incomer 1 is working (W), Incomer 2 standby (S):
  * only one of them carries the IMCC at a time, so the working demand is counted once; for transformer sizing the
- * standby feeder is counted too, as every standby load is. Both carry the IMCC tag as group, so the sizing places
+ * standby feeder is listed but not counted by the transformer sizing (standby rows are never counted). Both carry the IMCC tag as group, so the sizing places
  * them on different transformer sections. Sized from the IMCC's working current, never from the incomer breaker rating.
  */
 export function imccFeederRows(set: ImccDesignSet): ImccFeederRow[] {

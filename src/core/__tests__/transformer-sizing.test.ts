@@ -269,7 +269,8 @@ describe("spreadsheet parsing", () => {
     expect(p.rows.map((r) => r.status)).toEqual(["W", "S", undefined]);
     expect(p.rows.map((r) => r.group)).toEqual(["CWP", "CWP", undefined]);
     const r = sizeTransformers(p.rows, 433);
-    expect(r.loads.map((l) => l.status)).toEqual(["W", "S", undefined]);
+    expect(r.loads.map((l) => l.status)).toEqual(["W", undefined]); // the standby row is not counted
+    expect(r.issues.some((i) => i.severity === "excluded" && i.rowNumber === 3 && /Standby \(S\)/.test(i.message))).toBe(true);
     expect(r.issues.some((i) => /not recognised \(use W or S\)/.test(i.message))).toBe(true);
   });
   it("accepts a W/S header on its own", () => {
@@ -300,20 +301,21 @@ describe("sample workbook end to end", () => {
     expect(parsed.rows.every((r) => r.status === "W" || r.status === "S")).toBe(true);
 
     // Independent arithmetic from the sample's numbers:
-    const dolKw = 185 + 185 + 160 + 160 + 132 + 90 + 315;
+    // the two standby pumps (185 kW and 160 kW) are not counted
+    const dolKw = 185 + 160 + 132 + 90 + 315;
     const vfdKw = 250 + 200 + 75;
     const expected =
       dolKw / (0.7 * 0.95) + vfdKw / (0.9 * 0.95) + (SQ3 * 433 * (180 + 120 + 250 + 800)) / 1000;
 
     const r = sizeTransformers(parsed.rows, 433, BOTH);
-    expect(r.loads).toHaveLength(14);
+    expect(r.loads).toHaveLength(12);
     expect(sizeTransformers(parsed.rows, 433).recommended).toMatchObject({ count: 3, ratingKva: 2000 }); // starts with 3
-    expect(r.issues.filter((i) => i.severity === "excluded")).toHaveLength(2);
-    expect(r.totalKva).toBeCloseTo(expected, 6); // ~3471.6 kVA
+    expect(r.issues.filter((i) => i.severity === "excluded")).toHaveLength(4); // 2 rows at 690 V and 2 standby rows
+    expect(r.totalKva).toBeCloseTo(expected, 6); // ~2952.8 kVA (working loads only)
     expect(r.recommended).toMatchObject({ count: 3, ratingKva: 2000, fits: true });
     expect(r.incomers).toBe(3);
     expect(r.couplers).toBe(2);
-    expect(r.recommended!.contingencyPct).toBeCloseTo((expected / 4000) * 100, 6); // ~86.8 %
+    expect(r.recommended!.contingencyPct).toBeCloseTo((expected / 4000) * 100, 6); // ~73.8 %
     const three = r.combos.find((c) => c.count === 3)!;
     expect(three.sections.reduce((a, s) => a + s.kva, 0)).toBeCloseTo(expected, 6);
     // duty/standby pairs end up on different sections in both combinations
@@ -323,7 +325,7 @@ describe("sample workbook end to end", () => {
         expect(Math.max(...per)).toBe(1);
       }
     }
-    // 2 transformers: 3471.6 kVA needs 2 x 4000 (2 x 2500 carries only 2250 with one out)
+    // 2 transformers: 2952.8 kVA needs 2 x 4000 (2 x 2500 carries only 2250 with one out)
     expect(r.combos.find((c) => c.count === 2)!.chosen.ratingKva).toBe(4000);
   });
 
