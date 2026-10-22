@@ -2,6 +2,14 @@
 
 Source: the user's load-distribution brief (Rev 0) plus follow-up answers. Code: `src/core/transformer-sizing.ts`.
 
+## Ratings, factors and the editable feeder block (latest)
+
+- **4000 kVA is for the 690 V system only.** At 433 V the ratings are 2000 and 2500 kVA (`ratingsForVoltage`); the 4000 kVA radio is disabled unless 690 V is the only level selected, and the core never tries 4000 kVA at 433 V.
+- **Diversity factor (industrial loads)**, editable, default **1**: the load considered is the sum of the loads of the list x this factor (0.8 = 80 % of the sum). It applies to the loads of the list, not to the fixed feeder block. Convention to confirm: it is a multiplier (a value below 1 reduces the load), not the textbook ratio above 1 that divides.
+- **Motor load factor**, editable, default **100 %**: the share of the rated motor power absorbed; motors only (kW rows and DOL / VFD rows given in amps), not feeders.
+- **Standby (S)** rows are never counted, also inside a group that has working members: the working members are sized, the standby ones are listed as excluded.
+- **PMCC/IMCC feeder block**: a table on the page (feeder rating, installed, counted in the load), default 6 x 63 A (4 counted), 6 x 32 A (4), 6 x 16 A (4), 10 x 6 A (6); rows can be edited, added, removed and restored to the defaults. Counted is limited to installed; a blank counted means all.
+
 ## Inputs
 Excel `.xlsx`, first sheet, header row required (column order does not matter):
 Description · Type (DOL / VFD / Feeder) · Amps rating · kW rating · Voltage level (433 or 690 V).

@@ -108,15 +108,17 @@ describe("the downloadable sample file", () => {
     expect(two.couplers).toBe(1);
   });
 
-  it("with all three standard ratings on offer, 3 transformers do not fit at any rating; 5 x 4000 kVA does", async () => {
-    expect(TOTAL_433).toBeGreaterThan(7200); // 3 x 4000 kVA carries 0.9 x 2 x 4000 = 7,200 kVA
-    expect(TOTAL_433).toBeLessThan(10800); // 5 = 3 + 2 of 4000 kVA carries 7200 + 3600 = 10,800 kVA; of 2500 kVA only 4500 + 2250 = 6,750 kVA
+  it("with all standard ratings on offer, 4000 kVA is not tried at 433 V (690 V only); 6 x 2500 kVA is the first that fits", async () => {
+    // 3 = 2 x 2500 x 0.9 + ... : 3 x 2500 carries 4,500 kVA, 5 = 3 + 2 carries 4500 + 2250 = 6,750 kVA, 6 = 3 + 3 carries 9,000 kVA >= 8,512.6 kVA
+    expect(TOTAL_433).toBeGreaterThan(6750);
+    expect(TOTAL_433).toBeLessThan(9000);
     const r = sizeTransformers((await load()).rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: STANDARD_RATINGS_KVA });
     expect(r.combos.map((c) => [c.count, c.candidates.map((x) => [x.ratingKva, x.fits])])).toEqual([
-      [3, [[2000, false], [2500, false], [4000, false]]],
-      [5, [[2000, false], [2500, false], [4000, true]]],
+      [3, [[2000, false], [2500, false]]],
+      [5, [[2000, false], [2500, false]]],
+      [6, [[2000, false], [2500, true]]],
     ]);
-    expect(r.recommended).toMatchObject({ count: 5, ratingKva: 4000 });
+    expect(r.recommended).toMatchObject({ count: 6, ratingKva: 2500 });
   });
 
   it("amps-only loads are converted at their own voltage (433 V loads at 433 V, 690 V loads at 690 V)", async () => {

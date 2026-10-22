@@ -1,7 +1,7 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
 import {
-  STANDBY_NOT_COUNTED, currentOf, displayCombos, failureReason, spareKey,
+  STANDBY_NOT_COUNTED, currentOf, ratingsForVoltage, displayCombos, failureReason, spareKey,
   type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
 } from "./transformer-sizing";
 
@@ -211,9 +211,11 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Power factor, DOL motors", n(op.powerFactor.DOL, "0.00")),
     kv("Power factor, VFD motors", n(op.powerFactor.VFD, "0.00")),
     kv("Power factor, feeders", n(op.powerFactor.FEEDER, "0.00")),
+    kv("Diversity factor (industrial loads)", n(op.diversityFactor, "0.00")),
+    kv("Motor load factor (%)", pct(op.motorLoadFactor * 100)),
     kv("Max transformer loading, normal running (%)", pct(normalPct)),
     kv("Max transformer loading, one transformer out (%)", pct(contPct)),
-    kvText("Ratings considered (kVA)", [...op.ratingsKva].sort((x, y) => x - y).join(", ")),
+    kvText("Ratings considered (kVA)", ratingsForVoltage(r.selectedVoltageV, op.ratingsKva).sort((x, y) => x - y).join(", ")),
     kv("Voltage used to convert amps to kVA (V)", n(op.calculationVoltageV[r.selectedVoltageV] ?? r.selectedVoltageV)),
     kvText("Total kVA basis", "Arithmetic sum of each load's kVA"),
     kvText("Load factor", "Working (W) loads at 100 %; standby (S) is not counted"),
