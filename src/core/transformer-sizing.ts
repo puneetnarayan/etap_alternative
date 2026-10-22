@@ -55,6 +55,13 @@ export interface SizingOptions {
    * a set of 3 (the two end sections), or on each side of the bus coupler of a set of 2. Empty = none.
    */
   mccFeeders: MccFeeder[];
+  /**
+   * Diversity factor for the industrial loads (1 = none): the load considered is the sum of the loads x this factor
+   * (e.g. 0.8 = 80 % of the sum). Applied to every load of the list, not to the fixed PMCC / IMCC feeder block. Default 1.
+   */
+  diversityFactor: number;
+  /** Motor load factor (1 = 100 %): the share of the rated motor power actually absorbed. Motors only (DOL / VFD). Default 1. */
+  motorLoadFactor: number;
 }
 
 export interface MccFeeder {
@@ -79,6 +86,16 @@ export const STANDARD_MCC_FEEDERS: MccFeeder[] = [
 /** Standard transformer ratings offered in the UI (kVA). */
 export const STANDARD_RATINGS_KVA = [2000, 2500, 4000];
 
+/** 4000 kVA is for the 690 V system only: the 433 V system takes 2000 and 2500 kVA. */
+export const MAX_KVA_AT_433 = 2500;
+
+/** The ratings allowed at a secondary voltage. Never empty: when none of `ratings` is allowed, the allowed standard ratings are used. */
+export function ratingsForVoltage(voltageV: number, ratings: readonly number[] = STANDARD_RATINGS_KVA): number[] {
+  if (voltageV >= 600) return [...ratings];
+  const ok = ratings.filter((r) => r <= MAX_KVA_AT_433);
+  return ok.length > 0 ? ok : STANDARD_RATINGS_KVA.filter((r) => r <= MAX_KVA_AT_433);
+}
+
 export const DEFAULT_OPTIONS: SizingOptions = {
   efficiency: 0.95,
   powerFactor: { DOL: 0.7, VFD: 0.9, FEEDER: 0.7 },
@@ -91,6 +108,8 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   totalBasis: "arithmetic",
   calculationVoltageV: {},
   mccFeeders: [],
+  diversityFactor: 1,
+  motorLoadFactor: 1,
 };
 
 /** Transformer secondary voltage options offered in the UI (primary is 6600 V). */
@@ -170,6 +189,11 @@ function normaliseType(raw: string): LoadType | "UNKNOWN" {
   return "UNKNOWN";
 }
 
+/** " × load factor 0.8 × diversity 0.9" when a factor is not 1; empty by default. */
+function factorText(opts: SizingOptions, motor: boolean): string {
+  return `${motor && opts.motorLoadFactor !== 1 ? ` × load factor ${opts.motorLoadFactor}` : ""}${opts.diversityFactor !== 1 ? ` × diversity ${opts.diversityFactor}` : ""}`;
+}
+
 /**
  * Classify one load row and convert it to kVA.
  *  - kW given            -> motor; kVA = kW / (pf * efficiency); pf by type (VFD 0.9, otherwise DOL 0.7)
@@ -215,7 +239,8 @@ export function sizeLoad(
       );
     }
     const pf = opts.powerFactor[pfType];
-    const kwIn = row.kw / opts.efficiency;
+    // motor load factor and diversity factor (both 1 by default)
+    const kwIn = (row.kw * opts.motorLoadFactor * opts.diversityFactor) / opts.efficiency;
     const kva = kwIn / pf;
     return {
       load: {
@@ -230,7 +255,7 @@ export function sizeLoad(
         kva,
         current: currentOf(kva, opts.calculationVoltageV[voltageV] ?? voltageV),
         powerFactor: pf,
-        basis: `kW ÷ (pf ${pf} × η ${opts.efficiency})`,
+        basis: `kW${factorText(opts, true)} ÷ (pf ${pf} × η ${opts.efficiency})`,
         group: row.group,
         status: row.status,
         warnings,
@@ -240,8 +265,8 @@ export function sizeLoad(
 
   const amps = row.amps as number;
   const calcV = opts.calculationVoltageV[voltageV] ?? voltageV;
-  const kva = (SQRT3 * calcV * amps) / 1000;
   const isMotor = type === "DOL" || type === "VFD";
+  const kva = ((SQRT3 * calcV * amps) / 1000) * (isMotor ? opts.motorLoadFactor : 1) * opts.diversityFactor;
   const loadType: LoadType = isMotor ? type : "FEEDER";
   const pf = opts.powerFactor[loadType];
   if (!isMotor && type === "UNKNOWN" && row.type.trim() !== "") {
@@ -260,7 +285,7 @@ export function sizeLoad(
       kva,
       current: currentOf(kva, calcV),
       powerFactor: pf,
-      basis: `√3 × ${calcV} V × ${amps} A (kW shown at pf ${pf})`,
+      basis: `√3 × ${calcV} V × ${amps} A${factorText(opts, isMotor)} (kW shown at pf ${pf})`,
       group: row.group,
       status: row.status,
       warnings,
@@ -909,6 +934,8 @@ export function sizeTransformers(
   selectedVoltageV: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
 ): SizingResult {
+  // 4000 kVA only exists for the 690 V system.
+  opts = { ...opts, ratingsKva: ratingsForVoltage(selectedVoltageV, opts.ratingsKva) };
   const loads: SizedLoad[] = [];
   const issues: RowIssue[] = [];
   for (const row of rows) {

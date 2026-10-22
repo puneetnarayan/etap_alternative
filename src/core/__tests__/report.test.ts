@@ -70,12 +70,14 @@ describe("Excel report", () => {
     }
   });
 
-  it("2-transformer sheet shows 2 x 4000 with one coupler; one-out table is present", async () => {
+  it("2-transformer sheet shows 2 x 2500 (4000 kVA is 690 V only) with one coupler; one-out table is present", async () => {
     const { sheets } = await report(true);
     const rows = sheets["2 Transformers"];
-    expect(rows[0][0]).toBe("2 × 4000 kVA transformers, 6600 / 433 V");
+    expect(rows[0][0]).toBe("2 × 2500 kVA transformers, 6600 / 433 V");
     expect(String(rows[2][0])).toContain("2 incomers, 1 bus coupler");
-    expect(rows.some((r) => r[0] === "T1" && r[4] === "OK")).toBe(true);
+    expect(String(rows[1][0])).toContain("DOES NOT FIT"); // 2 x 2500 kVA carries 2,250 kVA, the working load is 2,952.8 kVA
+    expect(rows.some((r) => r[0] === "T1")).toBe(true);
+    expect(rows.some((r) => r[0] === "Transformer out")).toBe(true); // the one-out table is present
   });
 
   it("loads sheet carries W and S for each load", async () => {
@@ -545,7 +547,7 @@ describe("Excel report: pastel load kinds, number formats, centring, no author m
     for (const sh of sheets.filter((x) => x.sheet !== "Original load list")) {
       for (const c of numericCells(sh)) {
         const isPct = /%/.test(c.head);
-        const isPf = /power factor/i.test(c.head);
+        const isPf = /power factor|diversity factor/i.test(c.head);
         if (isPct) { expect(c.format, `${sh.sheet}: ${c.head}`).toBe("0.0"); pctCells++; }
         else if (isPf) { expect(c.format, `${sh.sheet}: ${c.head}`).toBe("0.00"); pfCells++; }
         else {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
+  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, ratingsForVoltage, type MccFeeder, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
   sizeTransformers,
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
@@ -49,6 +49,18 @@ function presentVoltages(rows: RawLoadRow[] | null): number[] {
 }
 type ReportStatus = { kind: "idle" } | { kind: "busy" } | { kind: "done"; name: string } | { kind: "error"; message: string };
 
+/** The editable feeder block as MccFeeder[]: rows with a valid current and count; counted is limited to the installed number. */
+function parseFeeders(rows: { amps: string; count: string; counted: string }[]): MccFeeder[] {
+  const out: MccFeeder[] = [];
+  for (const r of rows) {
+    const amps = Number(r.amps), count = Math.floor(Number(r.count));
+    if (!(amps > 0) || !Number.isFinite(count) || count <= 0) continue;
+    const counted = r.counted.trim() === "" ? count : Math.min(count, Math.max(0, Math.floor(Number(r.counted))));
+    out.push({ amps, count, counted: Number.isFinite(counted) ? counted : count });
+  }
+  return out;
+}
+
 function num(s: string, fallback: number, min: number, max: number) {
   const v = Number(s);
   return Number.isFinite(v) && v > min && v <= max ? v : fallback;
@@ -81,6 +93,10 @@ export default function TransformerSizing() {
   const fileName = loadList?.fileName ?? "";
   const [choice, setChoice] = useState<VoltageChoice>("433");
   const [calcV433, setCalcV433] = useState("433");
+  const [diversity, setDiversity] = useState("1"); // diversity factor for the industrial loads, default 1
+  const [motorLf, setMotorLf] = useState("100"); // motor load factor (%), default 100
+  // The fixed PMCC / IMCC feeder block, editable; the defaults are the standard numbers.
+  const [feederRows, setFeederRows] = useState(() => STANDARD_MCC_FEEDERS.map((f) => ({ amps: String(f.amps), count: String(f.count), counted: String(f.counted ?? f.count) })));
   const [combination, setCombination] = useState<Combination>("3");
   const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
@@ -104,17 +120,21 @@ export default function TransformerSizing() {
   // The choice is limited to what the file has: a level that is not in the file, or "both" when only one is, falls back.
   const effective: VoltageChoice = choice === "both" ? (both ? "both" : String(present[0] ?? 433) as VoltageChoice)
     : present.length === 0 || present.includes(Number(choice)) ? choice : (String(present[0]) as VoltageChoice);
+  // 4000 kVA exists for the 690 V system only: with any other selection a chosen 4000 falls back to 2500.
+  const allowedRating = effective !== "690" && rating > ratingsForVoltage(433).slice(-1)[0] ? ratingsForVoltage(433).slice(-1)[0] : rating;
   const selected = TRANSFORMER_OPTIONS.filter((t) => effective === "both" || String(t.secondaryV) === effective);
 
   const opts: SizingOptions = useMemo(() => ({
     ...DEFAULT_OPTIONS,
     efficiency: num(eff, 95, 0, 100) / 100,
     powerFactor: { DOL: num(pfDol, 0.7, 0, 1), VFD: num(pfVfd, 0.9, 0, 1), FEEDER: num(pfFeeder, 0.7, 0, 1) },
-    ratingsKva: [rating],
+    ratingsKva: [allowedRating],
     counts: [Number(combination)],
-    mccFeeders: withMcc ? STANDARD_MCC_FEEDERS : [],
+    mccFeeders: withMcc ? parseFeeders(feederRows) : [],
     calculationVoltageV: { ...DEFAULT_OPTIONS.calculationVoltageV, 433: num(calcV433, 433, 0, 1000) },
-  }), [eff, pfDol, pfVfd, pfFeeder, rating, combination, withMcc, calcV433]);
+    diversityFactor: num(diversity, 1, 0, 2),
+    motorLoadFactor: num(motorLf, 100, 0, 150) / 100,
+  }), [eff, pfDol, pfVfd, pfFeeder, allowedRating, combination, withMcc, calcV433, diversity, motorLf, feederRows]);
 
   // One run per selected voltage level. When the chosen rating cannot carry a level's load even with the
   // maximum number of transformers, find what would (any standard rating).
@@ -194,16 +214,45 @@ export default function TransformerSizing() {
         </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Transformer rating</legend>
-          {STANDARD_RATINGS_KVA.map((r) => (
-            <label key={r} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
-              <input type="radio" name="rating" checked={rating === r} onChange={() => setRating(r)} /> {fmtInt(r)} kVA
-            </label>
-          ))}
+          {STANDARD_RATINGS_KVA.map((r) => {
+            // 4000 kVA is for the 690 V system only: offered when 690 V is the only level selected.
+            const allowed = effective === "690" ? true : ratingsForVoltage(433).includes(r);
+            return (
+              <label key={r} style={{ marginRight: 16, whiteSpace: "nowrap", opacity: allowed ? 1 : 0.5 }}>
+                <input type="radio" name="rating" disabled={!allowed} checked={allowedRating === r} onChange={() => setRating(r)} /> {fmtInt(r)} kVA{allowed ? "" : " (690 V only)"}
+              </label>
+            );
+          })}
         </fieldset>
-        <label>
-          <input type="checkbox" checked={withMcc} onChange={(e) => setWithMcc(e.target.checked)} />{" "}
-          Add PMCC/IMCC feeders to every set: {STANDARD_MCC_FEEDERS.map((f) => `${f.count} × ${f.amps} A`).join(", ")} installed, of which {STANDARD_MCC_FEEDERS.map((f) => f.counted).join(", ")} outputs are counted in the load ( half on each side of the middle transformer of a set of 3, or of the bus coupler of a set of 2)
-        </label>
+        <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
+          <legend>
+            <label>
+              <input type="checkbox" checked={withMcc} onChange={(e) => setWithMcc(e.target.checked)} />{" "}
+              PMCC/IMCC feeders added to every set (editable)
+            </label>
+          </legend>
+          <div style={{ fontSize: 13 }}>
+            Each row: feeders of that rating installed (listed) in every set, and how many of them are counted in the load; the others are listed with zero load.
+            Half of each kind sits on each side of the middle transformer of a set of 3, or of the bus coupler of a set of 2. The defaults are 6 × 63 A (4 counted), 6 × 32 A (4), 6 × 16 A (4) and 10 × 6 A (6).
+          </div>
+          <table style={{ borderCollapse: "collapse", marginTop: 4, opacity: withMcc ? 1 : 0.5 }}>
+            <thead><tr><th style={th}>Feeder rating (A)</th><th style={th}>Installed</th><th style={th}>Counted in the load</th><th style={th} /></tr></thead>
+            <tbody>
+              {feederRows.map((r, n) => (
+                <tr key={n}>
+                  {(["amps", "count", "counted"] as const).map((k) => (
+                    <td key={k} style={td}><input style={{ width: 70 }} value={r[k]} onChange={(e) => setFeederRows((x) => x.map((y, i) => (i === n ? { ...y, [k]: e.target.value } : y)))} /></td>
+                  ))}
+                  <td style={td}><button type="button" onClick={() => setFeederRows((x) => x.filter((_, i) => i !== n))} aria-label="Remove row">✕</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ margin: "4px 0" }}>
+            <button type="button" onClick={() => setFeederRows((x) => [...x, { amps: "", count: "", counted: "" }])}>Add a row</button>{" "}
+            <button type="button" onClick={() => setFeederRows(STANDARD_MCC_FEEDERS.map((f) => ({ amps: String(f.amps), count: String(f.count), counted: String(f.counted ?? f.count) })))}>Restore the defaults</button>
+          </p>
+        </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Start with</legend>
           {([["3", "3 transformers (3 incomers, 2 bus couplers)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"]] as const).map(([v, label]) => (
@@ -226,10 +275,16 @@ export default function TransformerSizing() {
           <label>Power factor VFD <input style={{ width: 60 }} value={pfVfd} onChange={(e) => setPfVfd(e.target.value)} /></label>
           <label>Power factor feeder <input style={{ width: 60 }} value={pfFeeder} onChange={(e) => setPfFeeder(e.target.value)} /></label>
           <label>Voltage for amps → kVA at 433 V (V) <input style={{ width: 60 }} value={calcV433} onChange={(e) => setCalcV433(e.target.value)} /></label>
+          <label title="The load considered is the sum of the loads x this factor (1 = no diversity, 0.8 = 80 % of the sum). Applies to the loads of the list, not to the fixed feeder block.">
+            Diversity factor (industrial loads) <input style={{ width: 60 }} value={diversity} onChange={(e) => setDiversity(e.target.value)} />
+          </label>
+          <label title="Share of the rated motor power actually absorbed. Motors only (DOL / VFD).">
+            Motor load factor (%) <input style={{ width: 60 }} value={motorLf} onChange={(e) => setMotorLf(e.target.value)} />
+          </label>
         </div>
         <p style={{ margin: "4px 0" }}>
           Fixed: maximum loading {fmtPct(DEFAULT_OPTIONS.normalLimit * 100)} % in normal running and {fmtPct(DEFAULT_OPTIONS.contingencyLimit * 100)} % on each remaining
-          transformer with one out. Total kVA is the sum of each load&apos;s kVA. Working (W) loads count at 100 %; standby (S) rows are not counted (listed as excluded).
+          transformer with one out. Total kVA is the sum of each load&apos;s kVA x the diversity factor (motors also x the motor load factor; both 1 by default). Working (W) loads count;  standby (S) rows are not counted (listed as excluded).
           Loads given in amps are converted to kVA at the voltage above (690 V loads at 690 V).
         </p>
       </fieldset>

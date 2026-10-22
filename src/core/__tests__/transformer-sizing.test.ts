@@ -3,7 +3,7 @@ import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet, spareFeeders, spareKey,
-  parseStatus, parseVoltage, setCapacityKva, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
+  parseStatus, parseVoltage, ratingsForVoltage, setCapacityKva, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
 } from "..";
 
 const row = (o: Partial<RawLoadRow>): RawLoadRow => ({ rowNumber: 2, description: "x", type: "", voltageV: 433, ...o });
@@ -190,7 +190,7 @@ describe("combos and one-out check", () => {
     const two = r.combos.find((c) => c.count === 2)!;
     expect(two.fits).toBe(true);
     expect(two.chosen.ratingKva).toBe(2500); // 2,216.2 <= 2,250 (2 x 2000 would carry only 1,800)
-    expect(two.candidates.map((c) => [c.ratingKva, c.fits])).toEqual([[2000, false], [2500, true], [4000, true]]);
+    expect(two.candidates.map((c) => [c.ratingKva, c.fits])).toEqual([[2000, false], [2500, true]]); // 4000 kVA exists for 690 V only, so it is not tried at 433 V
     expect(two.couplers).toBe(1);
   });
   it("one-out scenarios: remaining units share the total and must stay <= 90 %", () => {
@@ -325,8 +325,11 @@ describe("sample workbook end to end", () => {
         expect(Math.max(...per)).toBe(1);
       }
     }
-    // 2 transformers: 2952.8 kVA needs 2 x 4000 (2 x 2500 carries only 2250 with one out)
-    expect(r.combos.find((c) => c.count === 2)!.chosen.ratingKva).toBe(4000);
+    // 2 transformers: 2,952.8 kVA does not fit 2 x 2500 (it carries 2,250 kVA one out), and 4000 kVA is for 690 V only:
+    // the largest rating tried at 433 V is 2500 kVA and it does not fit
+    const two = r.combos.find((c) => c.count === 2)!;
+    expect(two.chosen.ratingKva).toBe(2500);
+    expect(two.fits).toBe(false);
   });
 
   it("690 V group fits 2 x 2000", async () => {
@@ -765,3 +768,59 @@ describe("current of each load (kVA ÷ (√3 × V))", () => {
 function mkRows(): RawLoadRow[] {
   return [{ rowNumber: 2, description: "a", type: "DOL", kw: 185, voltageV: 433 }];
 }
+
+describe("factors and the rating rule asked for", () => {
+  const SQ3 = Math.sqrt(3);
+  const mk = (over: Partial<RawLoadRow>): RawLoadRow => ({ rowNumber: 2, description: "x", type: "DOL", voltageV: 433, ...over });
+  // 100 kW DOL motor: kVA = 100 / (0.7 x 0.95) = 150.38; 100 A feeder: kVA = sqrt3 x 433 x 100 / 1000 = 75.0
+  const dol = mk({ kw: 100, status: "W" });
+  const feeder = mk({ rowNumber: 3, type: "Feeder", amps: 100, status: "W" });
+  const total = (rows: RawLoadRow[], o: Partial<typeof DEFAULT_OPTIONS> = {}) => sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ...o }).totalKva;
+
+  it("defaults: diversity factor 1 and motor load factor 100 % change nothing", () => {
+    expect(DEFAULT_OPTIONS.diversityFactor).toBe(1);
+    expect(DEFAULT_OPTIONS.motorLoadFactor).toBe(1);
+    expect(total([dol, feeder])).toBeCloseTo(100 / (0.7 * 0.95) + (SQ3 * 433 * 100) / 1000, 9);
+  });
+  it("diversity factor: the loads of the list are multiplied by it (0.8 = 80 % of the sum)", () => {
+    expect(total([dol, feeder], { diversityFactor: 0.8 })).toBeCloseTo(0.8 * (100 / (0.7 * 0.95) + (SQ3 * 433 * 100) / 1000), 9);
+    const l = sizeTransformers([dol], 433, { ...DEFAULT_OPTIONS, diversityFactor: 0.8 }).loads[0];
+    expect(l.kva).toBeCloseTo((0.8 * 100) / (0.7 * 0.95), 9);
+    expect(l.basis).toContain("diversity 0.8");
+  });
+  it("motor load factor: motors only (kW rows and amps motors), not feeders", () => {
+    expect(total([dol], { motorLoadFactor: 0.75 })).toBeCloseTo((0.75 * 100) / (0.7 * 0.95), 9);
+    const ampsMotor = mk({ type: "VFD", amps: 100 });
+    expect(total([ampsMotor], { motorLoadFactor: 0.75 })).toBeCloseTo(0.75 * ((SQ3 * 433 * 100) / 1000), 9);
+    expect(total([feeder], { motorLoadFactor: 0.75 })).toBeCloseTo((SQ3 * 433 * 100) / 1000, 9); // a feeder is not a motor
+    expect(total([dol], { motorLoadFactor: 0.8, diversityFactor: 0.9 })).toBeCloseTo((0.8 * 0.9 * 100) / (0.7 * 0.95), 9);
+  });
+  it("in a group with working and standby loads only the working one is counted; the standby row is listed as excluded", () => {
+    const rows = [mk({ rowNumber: 2, description: "Pump A", kw: 100, status: "W", group: "CWP" }), mk({ rowNumber: 3, description: "Pump B", kw: 100, status: "S", group: "CWP" })];
+    const r = sizeTransformers(rows, 433);
+    expect(r.loads.map((l) => l.description)).toEqual(["Pump A"]);
+    expect(r.totalKva).toBeCloseTo(100 / (0.7 * 0.95), 9);
+    expect(r.issues.some((i) => i.severity === "excluded" && i.description === "Pump B" && /Standby \(S\)/.test(i.message))).toBe(true);
+  });
+  it("4000 kVA is for the 690 V system only", () => {
+    expect(ratingsForVoltage(433)).toEqual([2000, 2500]);
+    expect(ratingsForVoltage(690)).toEqual([2000, 2500, 4000]);
+    expect(ratingsForVoltage(433, [4000])).toEqual([2000, 2500]); // nothing allowed left: the allowed standard ratings
+    const r433 = sizeTransformers([mk({ rowNumber: 2, type: "Feeder", amps: 100 })], 433, { ...DEFAULT_OPTIONS, ratingsKva: [4000] });
+    expect(r433.combos[0].candidates.map((c) => c.ratingKva)).toEqual([2000, 2500]);
+    // 690 V: a 4000 kVA transformer can be chosen. 10 feeders of 500 A at 690 V = 5,976 kVA: 3 x 4000 carries 7,200 kVA one out
+    const big = Array.from({ length: 10 }, (_, n) => mk({ rowNumber: n + 2, type: "Feeder", amps: 500, voltageV: 690 }));
+    const r690 = sizeTransformers(big, 690, { ...DEFAULT_OPTIONS, ratingsKva: [4000], counts: [3] });
+    expect(r690.recommended).toMatchObject({ count: 3, ratingKva: 4000 });
+    expect(r690.totalKva).toBeCloseTo((10 * SQ3 * 690 * 500) / 1000, 6);
+  });
+  it("the PMCC/IMCC feeder block is editable: installed vs counted, any ratings", () => {
+    const loads = [mk({ type: "Feeder", amps: 100 })];
+    const base = sizeTransformers(loads, 433, { ...DEFAULT_OPTIONS, counts: [3] }).combos[0].totalKva;
+    const custom = sizeTransformers(loads, 433, { ...DEFAULT_OPTIONS, counts: [3], mccFeeders: [{ amps: 63, count: 8, counted: 2 }, { amps: 25, count: 4 }] }).combos[0].totalKva;
+    // one set of 3: 2 counted 63 A feeders + all 4 (counted defaults to the installed number) 25 A feeders
+    expect(custom - base).toBeCloseTo((SQ3 * 433 * (2 * 63 + 4 * 25)) / 1000, 9);
+    const std = sizeTransformers(loads, 433, { ...DEFAULT_OPTIONS, counts: [3], mccFeeders: STANDARD_MCC_FEEDERS }).combos[0].totalKva;
+    expect(std - base).toBeCloseTo((SQ3 * 433 * (4 * 63 + 4 * 32 + 4 * 16 + 6 * 6)) / 1000, 9); // the defaults: 480 A counted
+  });
+});

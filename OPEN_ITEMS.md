@@ -17,3 +17,5 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 | 11 | Carried over: BOM Class column logic; soft-starter rule (225 kW or 315 kW); which "yellow cells" need technical review. | Open |
 | 12 | Soft starter (SS) is calculated like a DOL motor (pf 0.7, efficiency 0.93). | Confirmed |
 | 13 | The incomer limit applies to design current (working x 1.25), at most the selected ACB x 90 % (adjustable). | Confirmed (90 % on design current) |
+| 14 | Diversity factor is applied as a multiplier on the loads of the list (default 1; 0.8 = 80 % of the sum). Confirm this convention (the textbook diversity factor is above 1 and divides). | Open |
+| 15 | Motor load factor applies to motors only, default 100 %. Standards review items still open: fault level against the switchgear rating, motor-starting voltage dip, VFD harmonics, incomer and busbar rating. | Open |
