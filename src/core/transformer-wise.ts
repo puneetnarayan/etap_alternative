@@ -115,7 +115,7 @@ export function transformerWise(r: SizingResult, opts: SizingOptions): Transform
     const smaller = r.combos.filter((c) => c.count < combo.count);
     const prev = smaller[smaller.length - 1];
     if (prev) {
-      checks.push(`The next smaller number tried, ${prev.count} × ${fmt(prev.chosen.ratingKva)} kVA, carries only ${fmt(prev.chosen.maxLoadKva)} kVA within the limits against a load of ${fmt(prev.totalKva)} kVA: short by ${fmt(prev.totalKva - prev.chosen.maxLoadKva)} kVA${prev.chosen.balanced ? "" : " (and the loads cannot be balanced)"}. Numbers that add no capacity (4, 7, 10 ...) are not tried.`);
+      checks.push(`The next smaller number tried, ${prev.count} × ${fmt(prev.chosen.ratingKva)} kVA, carries only ${fmt(prev.chosen.maxLoadKva)} kVA within the limits against a load of ${fmt(prev.totalKva)} kVA: short by ${fmt(prev.totalKva - prev.chosen.maxLoadKva)} kVA${prev.chosen.balanced ? "" : " (and the loads cannot be balanced)"}. ${opts.pairsOnly ? "" : "Numbers that add no capacity (4, 7, 10 ...) are not tried."}`);
     } else {
       checks.push(`No smaller number is tried: ${combo.count} is the number started with and it fits.`);
     }
@@ -127,6 +127,13 @@ export function transformerWise(r: SizingResult, opts: SizingOptions): Transform
       checks.push(cheapest.final
         ? `Of all the combinations tried that fit, this one has the smallest installed capacity (${fmt(cheapest.installedKva)} kVA).`
         : `Another combination that fits has less installed capacity: ${cheapest.count} × ${fmt(cheapest.ratingKva)} kVA = ${fmt(cheapest.installedKva)} kVA (the preference setting orders by count first).`);
+    }
+    if (opts.pairsOnly) {
+      for (const set of combo.sets) {
+        for (const o of set.oneOut) {
+          checks.push(`Pair ${set.index}: if ${o.outName} is out, the other transformer takes the entire bus load of the pair, ${fmt(o.eachKva)} kVA = ${pctOf(o.loadingPct)} % of ${fmt(rating)} kVA (limit ${pctOf(opts.contingencyLimit * 100)} %).`);
+        }
+      }
     }
   } else {
     checks.push("No configuration fits within both limits: see the tables above.");
