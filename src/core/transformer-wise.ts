@@ -69,6 +69,20 @@ export interface TransformerWise {
   oneOutLimitPct: number;
 }
 
+/**
+ * The sets of a layout in words, short enough for a narrow column: [2,2,2,2,2,2,2] -> "7 sets of 2",
+ * [3,3,2] -> "2 sets of 3 + 1 set of 2".
+ */
+export function layoutText(layout: readonly number[]): string {
+  const runs: [number, number][] = [];
+  for (const size of layout) {
+    const last = runs[runs.length - 1];
+    if (last && last[0] === size) last[1]++;
+    else runs.push([size, 1]);
+  }
+  return runs.map(([size, n]) => `${n} ${n === 1 ? "set" : "sets"} of ${size}`).join(" + ");
+}
+
 /** The combination shown: the recommended one, else the last one tried. undefined when there are no loads. */
 export function finalCombo(r: SizingResult): ComboResult | undefined {
   if (r.recommended) return r.combos.find((c) => c.count === r.recommended!.count) ?? r.combos[r.combos.length - 1];

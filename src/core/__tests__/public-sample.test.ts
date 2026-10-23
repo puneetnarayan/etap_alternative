@@ -102,9 +102,9 @@ describe("the downloadable sample file", () => {
     const r = sizeTransformers(rows, 690);
     expect(r.loads).toHaveLength(2);
     expect(r.totalKva).toBeCloseTo(TOTAL_690, 6);
-    expect(r.recommended).toMatchObject({ count: 3, ratingKva: 2000 });
+    expect(r.recommended).toMatchObject({ count: 3, ratingKva: 4000 }); // 690 V takes 4000 kVA only
     const two = sizeTransformers(rows, 690, { ...DEFAULT_OPTIONS, counts: [2] });
-    expect(two.recommended).toMatchObject({ count: 2, ratingKva: 2000 }); // 1,091.9 <= 1,800
+    expect(two.recommended).toMatchObject({ count: 2, ratingKva: 4000 }); // 1,091.9 <= 3,600
     expect(two.couplers).toBe(1);
   });
 

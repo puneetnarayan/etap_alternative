@@ -27,8 +27,8 @@ export interface SizingOptions {
   counts: number[];
   /**
    * If the loads cannot be balanced within the limits with `counts`, more transformers are added
-   * (more sets of 3 first, a set of 2 at the end for the remainder) until they can or this many
-   * transformers is reached (see `layoutFor`).
+   * (more sets of 3 first, a set of 2 at the end for the remainder) until they can. There is no practical limit; this
+   * many is only a ceiling that stops a runaway search (see `layoutFor`).
    */
   maxTransformers: number;
   /**
@@ -92,14 +92,15 @@ export const STANDARD_MCC_FEEDERS: MccFeeder[] = [
 /** Standard transformer ratings offered in the UI (kVA). */
 export const STANDARD_RATINGS_KVA = [2000, 2500, 4000];
 
-/** 4000 kVA is for the 690 V system only: the 433 V system takes 2000 and 2500 kVA. */
-export const MAX_KVA_AT_433 = 2500;
+/** The 433 V system takes 2000 and 2500 kVA; the 690 V system takes 4000 kVA only. */
+export const RATINGS_AT_433_KVA = [2000, 2500];
+export const RATINGS_AT_690_KVA = [4000];
 
-/** The ratings allowed at a secondary voltage. Never empty: when none of `ratings` is allowed, the allowed standard ratings are used. */
+/** The ratings allowed at a secondary voltage. Never empty: when none of `ratings` is allowed, all the allowed standard ratings are used. */
 export function ratingsForVoltage(voltageV: number, ratings: readonly number[] = STANDARD_RATINGS_KVA): number[] {
-  if (voltageV >= 600) return [...ratings];
-  const ok = ratings.filter((r) => r <= MAX_KVA_AT_433);
-  return ok.length > 0 ? ok : STANDARD_RATINGS_KVA.filter((r) => r <= MAX_KVA_AT_433);
+  const allowed = voltageV >= 600 ? RATINGS_AT_690_KVA : RATINGS_AT_433_KVA;
+  const ok = ratings.filter((r) => allowed.includes(r));
+  return ok.length > 0 ? ok : [...allowed];
 }
 
 export const DEFAULT_OPTIONS: SizingOptions = {
@@ -109,7 +110,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   contingencyLimit: 0.9,
   ratingsKva: STANDARD_RATINGS_KVA,
   counts: [3],
-  maxTransformers: 20,
+  maxTransformers: 1000,
   pairsOnly: false,
   stepUp: "min-installed",
   totalBasis: "arithmetic",

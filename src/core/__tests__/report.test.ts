@@ -128,11 +128,11 @@ describe("Excel report with sets of transformers", () => {
     // selected (3) and the final one (5) get a sheet; 4 is only in the summary table
     expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Justification", "Loads", "3 Transformers", "5 Transformers"]);
     const sum = sheets["Summary"];
-    expect(find(sum, "Recommended")![1]).toBe("5 × 2000 kVA (sets of 3 + 2)");
+    expect(find(sum, "Recommended")![1]).toBe("5 × 2000 kVA (1 set of 3 + 1 set of 2)");
     expect(find(sum, "Incomers")![1]).toBe(5);
     expect(find(sum, "Bus couplers")![1]).toBe(3);
-    const tried = sum.filter((r) => typeof r[0] === "number" && typeof r[1] === "string" && /^[23]( \+ [23])*$/.test(r[1] as string));
-    expect(tried.map((r) => [r[0], r[1], r[3]])).toEqual([[3, "3", "No"], [5, "3 + 2", "Yes"]]); // 4 (2 + 2) adds nothing: skipped
+    const tried = sum.filter((r) => typeof r[0] === "number" && typeof r[1] === "string" && /^\d+ sets? of [23]( \+ \d+ sets? of [23])*$/.test(r[1] as string));
+    expect(tried.map((r) => [r[0], r[1], r[3]])).toEqual([[3, "1 set of 3", "No"], [5, "1 set of 3 + 1 set of 2", "Yes"]]); // 4 (2 + 2) adds nothing: skipped
     const five = sheets["5 Transformers"];
     expect(String(five[3][0])).toContain("5 incomers, 3 bus couplers, in 2 independent sets (3 + 2)");
     expect(five.some((r) => String(r[0]).startsWith("Set 1: 3 transformers"))).toBe(true);
@@ -243,10 +243,10 @@ describe("Excel report formatting", () => {
     // 2 x 2000 kVA forced: 2,952.8 kVA (working loads only) is 73.8 % normal (<= 80, within) but 147.6 % one out (> 90, over); 3 is added and fits
     const { byName } = await sheetsFor({ ...DEFAULT_OPTIONS, ratingsKva: [2000], counts: [2] });
     const sum = byName["Summary"].data;
-    const row2 = sum.find((r) => val(r[0]) === 2 && val(r[1]) === "2")!;
+    const row2 = sum.find((r) => val(r[0]) === 2 && val(r[1]) === "1 set of 2")!;
     expect([row2[3], row2[6], row2[7]].map(bg)).toEqual([REPORT_COLORS.over, REPORT_COLORS.within, REPORT_COLORS.over]);
     expect(val(row2[3])).toBe("No");
-    const row3 = sum.find((r) => val(r[0]) === 3 && val(r[1]) === "3")!;
+    const row3 = sum.find((r) => val(r[0]) === 3 && val(r[1]) === "1 set of 3")!;
     expect([row3[3], row3[6], row3[7]].map(bg)).toEqual([REPORT_COLORS.within, REPORT_COLORS.within, REPORT_COLORS.within]);
     const two = byName["2 Transformers"].data;
     expect(bg(two[1][0])).toBe(REPORT_COLORS.over); // "DOES NOT FIT"
