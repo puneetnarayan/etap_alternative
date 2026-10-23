@@ -3,7 +3,7 @@ import { strFromU8, unzipSync } from "fflate";
 import readExcelFile, { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, buildReportBlob, displayCombos, parseLoadSheet, sizeTransformers,
+  transformerWise, DEFAULT_OPTIONS, STANDARD_RATINGS_KVA, buildReportBlob, displayCombos, parseLoadSheet, sizeTransformers,
   type SizedLoad,
 } from "..";
 
@@ -155,7 +155,7 @@ describe("the downloadable sample file", () => {
     const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true, originalSheet: raw });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
-    expect(Object.keys(sheets)).toEqual(["Summary", "Original load list", "Loads", "3 Transformers", "8 Transformers", "Issues"]);
+    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Original load list", "Loads", "3 Transformers", "8 Transformers", "Issues"]);
     const find = (rows: unknown[][], k: string) => rows.find((r) => r[0] === k);
     expect(find(sheets["Summary"], "Recommended")![1]).toBe("8 × 2000 kVA (sets of 3 + 3 + 2)");
     expect(find(sheets["Summary"], "Working (W) loads")![1]).toBe("29");
@@ -170,5 +170,49 @@ describe("the downloadable sample file", () => {
     expect(six.filter((r) => r[0] === "Incomer" && r[1] !== "Bus coupler")).toHaveLength(8); // (the legend row has "Bus coupler" next to "Incomer")
     expect(six.filter((r) => r[0] === "Bus coupler")).toHaveLength(5);
     expect(six.filter((r) => r[0] === "Outgoing load")).toHaveLength(29);
+  });
+
+  it("the Transformer-wise sheet: per-transformer kW, kVA, current and % loading, the totals, and the tables that show 8 is not an excess", async () => {
+    const raw = await readSheet(buf);
+    const opts = { ...DEFAULT_OPTIONS, ratingsKva: [2000] };
+    const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
+    const w = transformerWise(result, opts)!;
+    // 8 transformers = 3 + 3 + 2, 2000 kVA each
+    expect(w.rows).toHaveLength(8);
+    expect(w.rows.map((r) => r.set)).toEqual([1, 1, 1, 2, 2, 2, 3, 3]);
+    // independent arithmetic: kW (input) of every counted load, then the same total as kVA
+    const kwDol = DOL_KW / 0.95, kwVfd = VFD_KW / 0.95;
+    const kwAmps = (SQ3 * 433 * (180 * 0.7 + 120 * 0.9 + (250 + 800 + 550 + 700 + 900) * 0.7)) / 1000;
+    expect(w.totals.kw).toBeCloseTo(kwDol + kwVfd + kwAmps, 6);
+    expect(w.totals.kva).toBeCloseTo(TOTAL_433, 6);
+    expect(w.totals.currentA).toBeCloseTo((TOTAL_433 * 1000) / (SQ3 * 433), 6); // 11,350 A
+    expect(w.totals.installedKva).toBe(16000);
+    expect(w.totals.loadingPct).toBeCloseTo((TOTAL_433 / 16000) * 100, 6); // 53.2 %
+    expect(w.totals.loads).toBe(29);
+    for (const r of w.rows) {
+      expect(r.loadingPct).toBeCloseTo((r.kva / 2000) * 100, 9);
+      expect(r.currentA).toBeCloseTo((r.kva * 1000) / (SQ3 * 433), 9);
+      expect(r.ratedCurrentA).toBeCloseTo((2000 * 1000) / (SQ3 * 433), 9); // 2,667 A
+      expect(r.headroomKva).toBeCloseTo(0.8 * 2000 - r.kva, 9);
+      expect(r.within).toBe(true);
+    }
+    expect(w.rows.reduce((a, r) => a + r.kw, 0)).toBeCloseTo(w.totals.kw, 9);
+    // numbers tried: 3, 5, 6 do not fit (short of the load), 8 does and is the one taken
+    expect(w.quantity.map((q) => [q.count, q.fits, q.final])).toEqual([[3, false, false], [5, false, false], [6, false, false], [8, true, true]]);
+    expect(w.quantity.map((q) => q.capacityKva)).toEqual([3600, 5400, 7200, 9000]);
+    expect(w.quantity[2].marginKva).toBeCloseTo(7200 - TOTAL_433, 6); // short by 1,312.6 kVA
+    expect(w.quantity[3].marginKva).toBeCloseTo(9000 - TOTAL_433, 6); // 487.4 kVA of margin, less than one transformer adds (1,125 kVA)
+    expect(w.checks.join(" ")).toMatch(/short by 1,313 kVA/);
+    expect(w.candidates.find((c) => c.final)).toMatchObject({ count: 8, ratingKva: 2000, fits: true });
+    // the sheet in the Excel report carries the same numbers
+    const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true, originalSheet: raw });
+    const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((x) => [x.sheet, x.data]));
+    const sh = sheets["Transformer-wise"];
+    const total = sh.find((r) => r[0] === "Total")!;
+    expect(total[3] as number).toBeCloseTo(w.totals.kw, 6);
+    expect(total.filter((v) => typeof v === "number")).toEqual(expect.arrayContaining([Math.round(w.totals.kva) === w.totals.kva ? w.totals.kva : total[5]]));
+    expect(sh.filter((r) => /^S[123]-T\d$/.test(String(r[0])))).toHaveLength(8);
+    expect(sh.some((r) => r[0] === "Why this number of transformers is not an excess")).toBe(true);
+    expect(sh.filter((r) => r[10] === "◄ taken" || r[6] === "◄ taken").length).toBeGreaterThanOrEqual(2);
   });
 });

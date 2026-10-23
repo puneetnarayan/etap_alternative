@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, ratingsForVoltage, type MccFeeder, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet,
+  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, ratingsForVoltage, type MccFeeder, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet, transformerWise,
   sizeTransformers,
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
@@ -359,6 +359,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
             </button>
             <span> for the current settings (voltage, rating, number of transformers).</span>
           </div>
+          <Wise result={result} opts={opts} />
           {result.combos.some((c) => c.added) && <Tried combos={result.combos} recommendedCount={rec?.count} opts={opts} />}
           {displayCombos(result).map((c) => <Combo key={c.count} combo={c} recommended={rec?.count === c.count} opts={opts} tx={tx} />)}
         </>
@@ -410,6 +411,56 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
 }
 
 /** Every number of transformers tried, in one compact table. */
+/** Transformer-wise table (kW, kVA, current, % loading, totals) and the quantity check: the same numbers as the Excel sheet "Transformer-wise". */
+function Wise({ result, opts }: { result: SizingResult; opts: SizingOptions }) {
+  const w = transformerWise(result, opts);
+  if (!w) return null;
+  const bold = { fontWeight: "bold" as const };
+  return (
+    <div style={{ overflowX: "auto", margin: "12px 0" }}>
+      <table style={{ borderCollapse: "collapse" }}>
+        <caption style={{ textAlign: "left" }}><b>Transformer-wise loading</b> ({w.combo.count} × {fmtInt(w.combo.chosen.ratingKva)} kVA, normal running; standby rows are not counted)</caption>
+        <thead><tr>
+          <th style={th}>Transformer</th><th style={th}>Loads</th><th style={th}>kW (input)</th><th style={th}>kVA</th><th style={th}>Current (A)</th>
+          <th style={th}>Rating (kVA)</th><th style={th}>Rated current (A)</th><th style={th}>Loading (%)</th><th style={th}>Limit {fmtPct(w.normalLimitPct)} %</th><th style={th}>Margin (kVA)</th>
+        </tr></thead>
+        <tbody>
+          {w.rows.map((t) => (
+            <tr key={t.name}>
+              <td style={td}>{t.name}</td><td style={td}>{t.loads}</td><td style={td}>{fmtInt(t.kw)}</td><td style={td}>{fmtInt(t.kva)}</td><td style={td}>{fmtInt(t.currentA)}</td>
+              <td style={td}>{fmtInt(t.ratingKva)}</td><td style={td}>{fmtInt(t.ratedCurrentA)}</td>
+              <td style={limitCell(t.loadingPct, t.limitPct)}>{fmtPct(t.loadingPct)}</td><td style={verdictCell(t.within)}>{t.within ? "Within" : "Over"}</td><td style={td}>{fmtInt(t.headroomKva)}</td>
+            </tr>
+          ))}
+          <tr style={bold}>
+            <td style={td}>Total</td><td style={td}>{w.totals.loads}</td><td style={td}>{fmtInt(w.totals.kw)}</td><td style={td}>{fmtInt(w.totals.kva)}</td><td style={td}>{fmtInt(w.totals.currentA)}</td>
+            <td style={td}>{fmtInt(w.totals.installedKva)}</td><td style={td}>{fmtInt(w.totals.ratedCurrentA)}</td><td style={td}>{fmtPct(w.totals.loadingPct)}</td><td style={td} /><td style={td}>{fmtInt(w.totals.headroomKva)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style={{ fontSize: 12, margin: "2px 0" }}>Current = kVA × 1000 / (√3 × V). Total row: sums over the transformers; Rating = installed kVA; Loading = total load / installed kVA.</p>
+      <h4 style={{ margin: "8px 0 2px" }}>Why this number of transformers is not an excess</h4>
+      <ul style={{ margin: "2px 0", fontSize: 13 }}>{w.checks.map((t, n) => <li key={n}>{t}</li>)}</ul>
+      <table style={{ borderCollapse: "collapse", marginTop: 6 }}>
+        <caption style={{ textAlign: "left" }}><b>Numbers of transformers tried</b> (each with the smallest rating that fits)</caption>
+        <thead><tr>
+          <th style={th}>Transformers</th><th style={th}>Sets</th><th style={th}>Rating (kVA)</th><th style={th}>Installed kVA</th><th style={th}>Total load (kVA)</th>
+          <th style={th}>Average normal loading (%)</th><th style={th}>One out loading (%)</th><th style={th}>Capacity within the limits (kVA)</th><th style={th}>Margin (kVA)</th><th style={th}>Result</th>
+        </tr></thead>
+        <tbody>
+          {w.quantity.map((q) => (
+            <tr key={q.count} style={q.final ? { outline: "2px solid #4A86C5", outlineOffset: -2 } : undefined}>
+              <td style={td}>{q.count}{q.final ? " ◄ taken" : ""}</td><td style={td}>{q.layout.join(" + ")}</td><td style={td}>{fmtInt(q.ratingKva)}</td><td style={td}>{fmtInt(q.installedKva)}</td><td style={td}>{fmtInt(q.totalKva)}</td>
+              <td style={limitCell(q.normalPct, w.normalLimitPct)}>{fmtPct(q.normalPct)}</td><td style={limitCell(q.oneOutPct, w.oneOutLimitPct)}>{fmtPct(q.oneOutPct)}</td>
+              <td style={td}>{fmtInt(q.capacityKva)}</td><td style={td}>{fmtInt(q.marginKva)}</td><td style={verdictCell(q.fits)}>{q.fits ? "Fits" : "Does not fit"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Tried({ combos, recommendedCount, opts }: { combos: ComboResult[]; recommendedCount?: number; opts: SizingOptions }) {
   return (
     <div style={{ overflowX: "auto", margin: "12px 0" }}>

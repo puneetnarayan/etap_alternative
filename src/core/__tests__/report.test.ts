@@ -23,7 +23,7 @@ const find = (rows: unknown[][], label: string) => rows.find((r) => r[0] === lab
 describe("Excel report", () => {
   it("has summary, loads, one sheet per transformer combination, and issues", async () => {
     const { sheets } = await report(true);
-    expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
+    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
   });
 
   it("summary numbers match the calculation", async () => {
@@ -107,7 +107,7 @@ describe("Excel report with added transformers", () => {
     const result = sizeTransformers(parsed.rows, 433, opts);
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
-    expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
+    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Loads", "2 Transformers", "3 Transformers", "Issues"]);
     expect(String(sheets["3 Transformers"][2][0])).toContain("Added because the loads could not be balanced");
     expect(sheets["2 Transformers"][1][0]).toContain("DOES NOT FIT");
     expect(find(sheets["Summary"], "Recommended")![1]).toBe("3 × 2000 kVA");
@@ -126,7 +126,7 @@ describe("Excel report with sets of transformers", () => {
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
     // selected (3) and the final one (5) get a sheet; 4 is only in the summary table
-    expect(Object.keys(sheets)).toEqual(["Summary", "Loads", "3 Transformers", "5 Transformers"]);
+    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Loads", "3 Transformers", "5 Transformers"]);
     const sum = sheets["Summary"];
     expect(find(sum, "Recommended")![1]).toBe("5 × 2000 kVA (sets of 3 + 2)");
     expect(find(sum, "Incomers")![1]).toBe(5);
@@ -161,7 +161,7 @@ describe("Excel report formatting", () => {
 
   it("includes the original load sheet, second, with the values as uploaded", async () => {
     const { raw, names, byName } = await sheetsFor();
-    expect(names.slice(0, 3)).toEqual(["Summary", "Original load list", "Loads"]);
+    expect(names.slice(0, 4)).toEqual(["Summary", "Transformer-wise", "Original load list", "Loads"]);
     const orig = byName["Original load list"].data;
     expect(orig).toHaveLength(raw.length);
     raw.forEach((r, i) => r.forEach((v, j) => {
@@ -177,7 +177,7 @@ describe("Excel report formatting", () => {
     const result = sizeTransformers(parsed.rows, 433);
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: DEFAULT_OPTIONS, includePower: true, originalSheet: raw });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((x) => [x.sheet, x.data]));
-    expect(Object.keys(sheets).slice(0, 3)).toEqual(["Summary", "Original load list", "Loads"]);
+    expect(Object.keys(sheets).slice(0, 4)).toEqual(["Summary", "Transformer-wise", "Original load list", "Loads"]);
     const orig = sheets["Original load list"];
     expect(orig).toHaveLength(raw.length);
     expect(orig[0]).toEqual(raw[0]);

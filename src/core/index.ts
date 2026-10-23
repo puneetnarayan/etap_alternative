@@ -6,6 +6,7 @@ export * from "./validate";
 export * from "./loadflow";
 export * from "./transformer-sizing";
 export * from "./report";
+export * from "./transformer-wise";
 export * from "./format";
 export * from "./mcc-breaker";
 export * from "./bom";
