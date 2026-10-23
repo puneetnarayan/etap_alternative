@@ -290,8 +290,8 @@ function originalSheet(raw: NonNullable<ReportOptions["originalSheet"]>): Report
 }
 
 /**
- * "Transformer-wise": one row per transformer (kW, kVA, current, % loading) with the totals, then the tables that show the
- * number of transformers taken is the smallest that fits (the numbers tried, and every count x rating tried).
+ * "Transformer-wise": one row per transformer (kW, kVA, current, % loading) with the totals. The explanation that the number
+ * taken is the smallest that fits is on the "Justification" sheet.
  */
 function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | undefined {
   const w = transformerWise(r, o.options);
@@ -316,6 +316,27 @@ function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | 
       bn(w.totals.installedKva), bn(w.totals.ratedCurrentA), bn(w.totals.loadingPct, "0.0"), cell(""), bn(w.totals.headroomKva),
     ],
     [`Total row: kW, kVA and current are the sums over the transformers; "Rating" is the installed kVA; "Loading" is total load / installed kVA (the average).`],
+  ];
+  return { sheet: "Transformer-wise", data, columns: autoColumns(data) };
+}
+
+/**
+ * "Justification": the explanation that the number of transformers taken is the smallest that fits and not an excess,
+ * with the tables it rests on (the numbers of transformers tried, and every count x rating tried).
+ */
+function justificationSheet(r: SizingResult, o: ReportOptions): ReportSheet | undefined {
+  const w = transformerWise(r, o.options);
+  if (!w) return undefined;
+  const c = w.combo;
+  const op = o.options;
+  const data: Row[] = [
+    [title(`Justification of the number of transformers: ${c.count} × ${c.chosen.ratingKva} kVA, ${o.transformerLabel}`)],
+    banner(c.fits ? "Fits within both limits" : "DOES NOT FIT within both limits", c.fits),
+    [],
+    [label("Basis")],
+    [`Normal running: each transformer at most ${fmtPct(w.normalLimitPct)} % loaded. One transformer out: each remaining transformer of its set at most ${fmtPct(w.oneOutLimitPct)} % loaded.`],
+    [`Load counted: working (W) loads only, standby (S) rows are not counted. Diversity factor ${op.diversityFactor} (multiplier on the loads of the list), motor load factor ${fmtPct(op.motorLoadFactor * 100)} %.`],
+    [`Sets of 3 transformers (2 bus couplers) are used first, then a set of 2; more are added only when the loads cannot be balanced within the limits. 4000 kVA is for 690 V only.`],
     [],
     [label("Why this number of transformers is not an excess")],
     ...w.checks.map((t): Row => [t]),
@@ -334,7 +355,7 @@ function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | 
       verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits), x.final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""),
     ]),
   ];
-  return { sheet: "Transformer-wise", data, columns: autoColumns(data) };
+  return { sheet: "Justification", data, columns: autoColumns(data) };
 }
 
 function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
@@ -506,9 +527,11 @@ function issuesSheet(r: SizingResult): ReportSheet {
 
 export function buildReportSheets(result: SizingResult, o: ReportOptions): ReportSheet[] {
   const wise = transformerWiseSheet(result, o);
+  const just = justificationSheet(result, o);
   const sheets: ReportSheet[] = [
     summarySheet(result, o),
     ...(wise ? [wise] : []),
+    ...(just ? [just] : []),
     ...(o.originalSheet ? [originalSheet(o.originalSheet)] : []),
     loadsSheet(result, o),
     ...displayCombos(result).map((c) => comboSheet(c, o, result.spares)),

@@ -155,7 +155,7 @@ describe("the downloadable sample file", () => {
     const result = sizeTransformers(parseLoadSheet(raw).rows, 433, opts);
     const blob = await buildReportBlob(result, { transformerLabel: "6600 / 433 V", options: opts, includePower: true, originalSheet: raw });
     const sheets = Object.fromEntries((await readExcelFile(await blob.arrayBuffer())).map((s) => [s.sheet, s.data]));
-    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Original load list", "Loads", "3 Transformers", "8 Transformers", "Issues"]);
+    expect(Object.keys(sheets)).toEqual(["Summary", "Transformer-wise", "Justification", "Original load list", "Loads", "3 Transformers", "8 Transformers", "Issues"]);
     const find = (rows: unknown[][], k: string) => rows.find((r) => r[0] === k);
     expect(find(sheets["Summary"], "Recommended")![1]).toBe("8 × 2000 kVA (sets of 3 + 3 + 2)");
     expect(find(sheets["Summary"], "Working (W) loads")![1]).toBe("29");
@@ -212,7 +212,14 @@ describe("the downloadable sample file", () => {
     expect(total[3] as number).toBeCloseTo(w.totals.kw, 6);
     expect(total.filter((v) => typeof v === "number")).toEqual(expect.arrayContaining([Math.round(w.totals.kva) === w.totals.kva ? w.totals.kva : total[5]]));
     expect(sh.filter((r) => /^S[123]-T\d$/.test(String(r[0])))).toHaveLength(8);
-    expect(sh.some((r) => r[0] === "Why this number of transformers is not an excess")).toBe(true);
-    expect(sh.filter((r) => r[10] === "◄ taken" || r[6] === "◄ taken").length).toBeGreaterThanOrEqual(2);
+    expect(sh.some((r) => r[0] === "Why this number of transformers is not an excess")).toBe(false); // the explanation is on the Justification sheet
+    // Justification: the explanation, the numbers tried and every count x rating tried; the number taken is marked in both tables
+    const j = sheets["Justification"];
+    expect(String(j[0][0])).toBe("Justification of the number of transformers: 8 × 2000 kVA, 6600 / 433 V");
+    const why = j.findIndex((r) => r[0] === "Why this number of transformers is not an excess");
+    expect(why).toBeGreaterThan(0);
+    expect(w.checks.every((t) => j.some((r) => r[0] === t))).toBe(true);
+    expect(j.some((r) => String(r[0]).includes("Diversity factor 1 (multiplier on the loads of the list)"))).toBe(true);
+    expect(j.filter((r) => r[10] === "◄ taken" || r[6] === "◄ taken")).toHaveLength(2);
   });
 });
