@@ -39,7 +39,7 @@ function Tag({ value }: { value: string }) {
   return <span style={{ ...(bg ? shade(bg) : {}), padding: "0 5px", borderRadius: 3, border: BORDER }}>{value}</span>;
 }
 
-type Combination = "3" | "2";
+type Combination = "3" | "2" | "pairs";
 type VoltageChoice = "433" | "690" | "both";
 
 /** Which of the supported voltage levels (433, 690 V) the loads have, ascending. */
@@ -98,6 +98,8 @@ export default function TransformerSizing() {
   // The fixed PMCC / IMCC feeder block, editable; the defaults are the standard numbers.
   const [feederRows, setFeederRows] = useState(() => STANDARD_MCC_FEEDERS.map((f) => ({ amps: String(f.amps), count: String(f.count), counted: String(f.counted ?? f.count) })));
   const [combination, setCombination] = useState<Combination>("3");
+  const [normalLim, setNormalLim] = useState("80"); // maximum loading, normal running (%)
+  const [oneOutLim, setOneOutLim] = useState("90"); // maximum loading with one transformer out (%)
   const [rating, setRating] = useState<number>(STANDARD_RATINGS_KVA[0]);
   const [eff, setEff] = useState("95");
   const [pfDol, setPfDol] = useState("0.7");
@@ -129,12 +131,15 @@ export default function TransformerSizing() {
     efficiency: num(eff, 95, 0, 100) / 100,
     powerFactor: { DOL: num(pfDol, 0.7, 0, 1), VFD: num(pfVfd, 0.9, 0, 1), FEEDER: num(pfFeeder, 0.7, 0, 1) },
     ratingsKva: [allowedRating],
-    counts: [Number(combination)],
+    counts: [combination === "pairs" ? 2 : Number(combination)],
+    pairsOnly: combination === "pairs",
+    normalLimit: num(normalLim, 80, 0, 100) / 100,
+    contingencyLimit: num(oneOutLim, 90, 0, 100) / 100,
     mccFeeders: withMcc ? parseFeeders(feederRows) : [],
     calculationVoltageV: { ...DEFAULT_OPTIONS.calculationVoltageV, 433: num(calcV433, 433, 0, 1000) },
     diversityFactor: num(diversity, 1, 0, 2),
     motorLoadFactor: num(motorLf, 100, 0, 150) / 100,
-  }), [eff, pfDol, pfVfd, pfFeeder, allowedRating, combination, withMcc, calcV433, diversity, motorLf, feederRows]);
+  }), [eff, pfDol, pfVfd, pfFeeder, allowedRating, combination, normalLim, oneOutLim, withMcc, calcV433, diversity, motorLf, feederRows]);
 
   // One run per selected voltage level. When the chosen rating cannot carry a level's load even with the
   // maximum number of transformers, find what would (any standard rating).
@@ -255,14 +260,23 @@ export default function TransformerSizing() {
         </fieldset>
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Start with</legend>
-          {([["3", "3 transformers (3 incomers, 2 bus couplers)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"]] as const).map(([v, label]) => (
+          {([["3", "3 transformers (3 incomers, 2 bus couplers)"], ["2", "2 transformers (2 incomers, 1 bus coupler)"], ["pairs", "2-transformer sets only: 2 transformers with a bus coupler; if one is down the other takes the entire bus load"]] as const).map(([v, label]) => (
             <label key={v} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
               <input type="radio" name="combination" checked={combination === v} onChange={() => setCombination(v)} /> {label}
             </label>
           ))}
           <div style={{ margin: "4px 0 6px" }}>
-            The number of transformers is not fixed. If the loads cannot be balanced within the limits, more are added (up to {DEFAULT_OPTIONS.maxTransformers}):
-            more sets of 3 first, and a set of 2 at the end for the remainder. A bus coupler sits between neighbouring incomers in a set and none between sets.
+            {combination === "pairs" ? (
+              <>
+                Only sets of 2 transformers with a bus coupler. The coupler is normally open and each transformer feeds its own section; if one transformer is down, the other takes the entire bus load of its pair
+                (limited to the one-out loading below). If the loads do not fit, more pairs (2 + 2 + ...) are added, up to {DEFAULT_OPTIONS.maxTransformers} transformers.
+              </>
+            ) : (
+              <>
+                The number of transformers is not fixed. If the loads cannot be balanced within the limits, more are added (up to {DEFAULT_OPTIONS.maxTransformers}):
+                more sets of 3 first, and a set of 2 at the end for the remainder. A bus coupler sits between neighbouring incomers in a set and none between sets.
+              </>
+            )}
           </div>
         </fieldset>
       </div>
@@ -278,13 +292,19 @@ export default function TransformerSizing() {
           <label title="The load considered is the sum of the loads x this factor (1 = no diversity, 0.8 = 80 % of the sum). Applies to the loads of the list, not to the fixed feeder block.">
             Diversity factor (industrial loads) <input style={{ width: 60 }} value={diversity} onChange={(e) => setDiversity(e.target.value)} />
           </label>
+          <label title="Maximum loading of each transformer in normal running, % of its rating.">
+            Maximum loading, normal (%) <input style={{ width: 60 }} value={normalLim} onChange={(e) => setNormalLim(e.target.value)} />
+          </label>
+          <label title="Maximum loading of each remaining transformer with one transformer out, % of its rating. With 2-transformer sets the remaining transformer carries the entire bus load of its pair.">
+            Maximum loading, one out (%) <input style={{ width: 60 }} value={oneOutLim} onChange={(e) => setOneOutLim(e.target.value)} />
+          </label>
           <label title="Share of the rated motor power actually absorbed. Motors only (DOL / VFD).">
             Motor load factor (%) <input style={{ width: 60 }} value={motorLf} onChange={(e) => setMotorLf(e.target.value)} />
           </label>
         </div>
         <p style={{ margin: "4px 0" }}>
-          Fixed: maximum loading {fmtPct(DEFAULT_OPTIONS.normalLimit * 100)} % in normal running and {fmtPct(DEFAULT_OPTIONS.contingencyLimit * 100)} % on each remaining
-          transformer with one out. Total kVA is the sum of each load&apos;s kVA x the diversity factor (motors also x the motor load factor; both 1 by default). Working (W) loads count;  standby (S) rows are not counted (listed as excluded).
+          Maximum loading {fmtPct(opts.normalLimit * 100)} % in normal running and {fmtPct(opts.contingencyLimit * 100)} % on each remaining
+          transformer with one out (editable above). Total kVA is the sum of each load&apos;s kVA x the diversity factor (motors also x the motor load factor; both 1 by default). Working (W) loads count;  standby (S) rows are not counted (listed as excluded).
           Loads given in amps are converted to kVA at the voltage above (690 V loads at 690 V).
         </p>
       </fieldset>

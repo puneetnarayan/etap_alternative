@@ -32,6 +32,12 @@ export interface SizingOptions {
    */
   maxTransformers: number;
   /**
+   * Only 2-transformer sets, each with a bus coupler (2 incomers + 1 coupler): the coupler is normally open, each transformer
+   * feeds its own section, and if one transformer is out the other takes the entire bus load of its set. More pairs
+   * (2 + 2 + ...) are added when the loads do not fit. Default false (sets of 3 first).
+   */
+  pairsOnly: boolean;
+  /**
    * How to order candidates before picking the first that fits:
    *  - "min-installed": ascending total installed kVA (2x2000, 2x2500, 3x2000, 3x2500, 2x4000, 3x4000)
    *  - "count-first":   add a transformer before increasing the rating (2x2000, 3x2000, 2x2500, 3x2500, ...)
@@ -104,6 +110,7 @@ export const DEFAULT_OPTIONS: SizingOptions = {
   ratingsKva: STANDARD_RATINGS_KVA,
   counts: [3],
   maxTransformers: 20,
+  pairsOnly: false,
   stepUp: "min-installed",
   totalBasis: "arithmetic",
   calculationVoltageV: {},
@@ -299,8 +306,9 @@ export function sizeLoad(
  * between neighbouring incomers and no coupler between sets. The split with the fewest sets
  * (most sets of 3) is used because it carries the most load: 2, 3, 2+2, 3+2, 3+3, 3+2+2, 3+3+2, ...
  */
-export function layoutFor(count: number): number[] {
+export function layoutFor(count: number, pairsOnly = false): number[] {
   if (!Number.isInteger(count) || count < 2) return [];
+  if (pairsOnly) return count % 2 === 0 ? Array<number>(count / 2).fill(2) : [];
   const threes = count % 3 === 0 ? count / 3 : count % 3 === 1 ? (count - 4) / 3 : (count - 2) / 3;
   const twos = (count - 3 * threes) / 2;
   return [...Array<number>(threes).fill(3), ...Array<number>(twos).fill(2)];
@@ -352,7 +360,7 @@ export function evaluateCandidate(
   ratingKva: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
 ): Candidate {
-  const layout = layoutFor(count);
+  const layout = layoutFor(count, opts.pairsOnly);
   const sets = layout.length;
   const normalPct = (totalKva / (count * ratingKva)) * 100;
   const contingencyPct = (totalKva / ((count - sets) * ratingKva)) * 100;
@@ -574,7 +582,7 @@ export function distributeLoads(
   count: number,
   ratingKva: number,
   opts: SizingOptions = DEFAULT_OPTIONS,
-  layout: number[] = layoutFor(count),
+  layout: number[] = layoutFor(count, opts.pairsOnly),
   repair = true,
   fixed: Map<SizedLoad, number> = new Map(),
 ): { sections: Section[]; notes: string[] } {
@@ -825,7 +833,7 @@ function buildCombo(
   selectedVoltageV: number,
   added = false,
 ): ComboResult {
-  const fixed = mccFeedersFor(layoutFor(count), selectedVoltageV, opts);
+  const fixed = mccFeedersFor(layoutFor(count, opts.pairsOnly), selectedVoltageV, opts);
   const mccLoads = [...fixed.keys()];
   const loads = [...rows, ...mccLoads];
   const totalKva = rawTotalKva + combine(mccLoads, opts.totalBasis).kva;
@@ -927,7 +935,7 @@ export function displayCombos(result: SizingResult): ComboResult[] {
 
 /** What a layout can carry per kVA of rating, used to skip numbers of transformers that add nothing. */
 const relativeCapacity = (count: number, opts: SizingOptions) =>
-  layoutFor(count).reduce((a, k) => a + setCapacityKva(k, 1, opts), 0);
+  layoutFor(count, opts.pairsOnly).reduce((a, k) => a + setCapacityKva(k, 1, opts), 0);
 
 export function sizeTransformers(
   rows: RawLoadRow[],

@@ -3,7 +3,7 @@ import { readSheet } from "read-excel-file/universal";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, candidatesInOrder, displayCombos, distributeLoads, evaluateCandidate, failureReason, layoutFor, parseLoadSheet, spareFeeders, spareKey,
-  parseStatus, parseVoltage, ratingsForVoltage, setCapacityKva, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
+  parseStatus, parseVoltage, ratingsForVoltage, transformerWise, setCapacityKva, sizeLoad, sizeTransformers, type RawLoadRow, type SizedLoad,
 } from "..";
 
 const row = (o: Partial<RawLoadRow>): RawLoadRow => ({ rowNumber: 2, description: "x", type: "", voltageV: 433, ...o });
@@ -357,7 +357,7 @@ describe("more transformers = independent sets of 2 or 3", () => {
   const cap = (n: number) => evaluateCandidate(0, n, 2000).maxLoadKva;
 
   it("splits into sets of 2 or 3 with as few sets as possible", () => {
-    expect([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(layoutFor)).toEqual([
+    expect([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => layoutFor(n))).toEqual([
       [2], [3], [2, 2], [3, 2], [3, 3], [3, 2, 2], [3, 3, 2], [3, 3, 3], [3, 3, 2, 2], [3, 3, 3, 2], [3, 3, 3, 3],
     ]);
     for (let n = 2; n <= 20; n++) {
@@ -822,5 +822,67 @@ describe("factors and the rating rule asked for", () => {
     expect(custom - base).toBeCloseTo((SQ3 * 433 * (2 * 63 + 4 * 25)) / 1000, 9);
     const std = sizeTransformers(loads, 433, { ...DEFAULT_OPTIONS, counts: [3], mccFeeders: STANDARD_MCC_FEEDERS }).combos[0].totalKva;
     expect(std - base).toBeCloseTo((SQ3 * 433 * (4 * 63 + 4 * 32 + 4 * 16 + 6 * 6)) / 1000, 9); // the defaults: 480 A counted
+  });
+});
+
+describe("2-transformer sets only (pairsOnly): bus coupler, the other transformer takes the entire bus load", () => {
+  const SQ3 = Math.sqrt(3);
+  // 75.0 kVA per 100 A feeder at 433 V (sqrt3 x 433 x 100 / 1000)
+  const feeders = (n: number, amps = 100): RawLoadRow[] => Array.from({ length: n }, (_, k) => ({ rowNumber: k + 2, description: `F${k + 1}`, type: "Feeder", amps, voltageV: 433, status: "W" as const }));
+  const kva = (n: number, amps = 100) => (n * SQ3 * 433 * amps) / 1000;
+  const pairs = { ...DEFAULT_OPTIONS, pairsOnly: true, counts: [2], ratingsKva: [2000] };
+
+  it("layouts are only pairs: 2, 4, 6 transformers; odd numbers are not a layout", () => {
+    expect([2, 3, 4, 6, 8].map((n) => layoutFor(n, true))).toEqual([[2], [], [2, 2], [2, 2, 2], [2, 2, 2, 2]]);
+    expect(layoutFor(3)).toEqual([3]); // the default is unchanged
+  });
+  it("1,500 kVA: 2 x 2000 kVA fits; normally each carries 750 kVA (37.5 %); if one is out the other carries all 1,500 kVA = 75 % (limit 90 %)", () => {
+    const r = sizeTransformers(feeders(20), 433, pairs);
+    expect(r.totalKva).toBeCloseTo(kva(20), 9);
+    expect(r.recommended).toMatchObject({ count: 2, ratingKva: 2000, fits: true });
+    expect(r.incomers).toBe(2);
+    expect(r.couplers).toBe(1);
+    const c = r.combos[0];
+    expect(c.layout).toEqual([2]);
+    expect(c.sections.map((s) => s.kva)).toEqual([expect.closeTo(kva(10), 6), expect.closeTo(kva(10), 6)]);
+    expect(c.sections.map((s) => s.loadingPct)).toEqual([expect.closeTo((kva(10) / 2000) * 100, 9), expect.closeTo((kva(10) / 2000) * 100, 9)]);
+    expect(c.oneOut.map((o) => [o.eachKva, o.loadingPct])).toEqual([[expect.closeTo(kva(20), 9), expect.closeTo((kva(20) / 2000) * 100, 9)], [expect.closeTo(kva(20), 9), expect.closeTo((kva(20) / 2000) * 100, 9)]]);
+    expect(c.oneOut.every((o) => o.ok)).toBe(true);
+  });
+  it("2,400 kVA: one transformer out would carry 120 % so a second pair is added: 4 transformers = 2 + 2 (2 couplers), each pair 1,200 kVA, 60 % one out", () => {
+    const r = sizeTransformers(feeders(32), 433, pairs);
+    expect(r.combos.map((c) => [c.count, c.layout, c.fits])).toEqual([[2, [2], false], [4, [2, 2], true]]);
+    expect(r.recommended).toMatchObject({ count: 4, ratingKva: 2000 });
+    expect(r.couplers).toBe(2);
+    const four = r.combos[1];
+    expect(four.sets.map((s) => s.kva)).toEqual([expect.closeTo(kva(16), 6), expect.closeTo(kva(16), 6)]);
+    expect(four.oneOut.every((o) => o.loadingPct <= 90 + 1e-9)).toBe(true);
+    // the default configuration for the same load: 3 x 2000 kVA fits (3,600 kVA carried one out)
+    expect(sizeTransformers(feeders(32), 433, { ...DEFAULT_OPTIONS, ratingsKva: [2000] }).recommended).toMatchObject({ count: 3 });
+  });
+  it("the fit boundary follows the one-out limit (editable): 1,900 kVA is 95 % of 2000 kVA", () => {
+    const many = feeders(40, (1900 * 1000) / (SQ3 * 433) / 40);
+    expect(sizeTransformers(many, 433, pairs).recommended?.count).toBe(4); // 95 % > 90 %
+    expect(sizeTransformers(many, 433, { ...pairs, contingencyLimit: 1 }).recommended).toMatchObject({ count: 2, fits: true }); // 95 % <= 100 %
+  });
+  it("another rating: 2 x 2500 kVA carries 2,250 kVA one out; the rating radio value is what is tested", () => {
+    const many = feeders(40, (2000 * 1000) / (SQ3 * 433) / 40); // 2,000 kVA
+    expect(sizeTransformers(many, 433, pairs).recommended?.count).toBe(4);
+    expect(sizeTransformers(many, 433, { ...pairs, ratingsKva: [2500] }).recommended).toMatchObject({ count: 2, ratingKva: 2500 });
+  });
+  it("the fixed PMCC/IMCC feeders sit half on each side of the bus coupler", () => {
+    const r = sizeTransformers(feeders(4), 433, { ...pairs, mccFeeders: [{ amps: 63, count: 6, counted: 4 }] });
+    const c = r.combos[0];
+    expect(c.mccLoads).toHaveLength(6);
+    expect(c.sections.map((s) => s.loads.filter((l) => c.mccLoads.includes(l)).length)).toEqual([3, 3]);
+  });
+  it("the Transformer-wise data and its justification state what the other transformer carries if one is out", () => {
+    const r = sizeTransformers(feeders(20), 433, pairs);
+    const w = transformerWise(r, pairs)!;
+    expect(w.rows.map((t) => t.name)).toEqual(["T1", "T2"]);
+    expect(w.totals.kva).toBeCloseTo(kva(20), 6);
+    expect(w.checks.some((t) => /Pair 1: if T1 is out, the other transformer takes the entire bus load of the pair, 1,500 kVA = 75\.0 % of 2,000 kVA \(limit 90\.0 %\)/.test(t))).toBe(true);
+    expect(w.checks.some((t) => /Pair 1: if T2 is out/.test(t))).toBe(true);
+    expect(w.checks.join(" ")).not.toMatch(/Numbers that add no capacity/);
   });
 });

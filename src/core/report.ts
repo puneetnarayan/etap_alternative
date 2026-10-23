@@ -218,6 +218,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     kv("Max transformer loading, one transformer out (%)", pct(contPct)),
     kvText("Ratings considered (kVA)", ratingsForVoltage(r.selectedVoltageV, op.ratingsKva).sort((x, y) => x - y).join(", ")),
     kv("Voltage used to convert amps to kVA (V)", n(op.calculationVoltageV[r.selectedVoltageV] ?? r.selectedVoltageV)),
+    kvText("Transformer configuration", op.pairsOnly ? "2-transformer sets only, each with a bus coupler (normally open); if one transformer is down the other takes the entire bus load of its pair" : "Sets of 3 transformers first, then a set of 2 for the remainder"),
     kvText("Total kVA basis", "Arithmetic sum of each load's kVA"),
     kvText("Load factor", "Working (W) loads at 100 %; standby (S) is not counted"),
     [],
@@ -336,7 +337,9 @@ function justificationSheet(r: SizingResult, o: ReportOptions): ReportSheet | un
     [label("Basis")],
     [`Normal running: each transformer at most ${fmtPct(w.normalLimitPct)} % loaded. One transformer out: each remaining transformer of its set at most ${fmtPct(w.oneOutLimitPct)} % loaded.`],
     [`Load counted: working (W) loads only, standby (S) rows are not counted. Diversity factor ${op.diversityFactor} (multiplier on the loads of the list), motor load factor ${fmtPct(op.motorLoadFactor * 100)} %.`],
-    [`Sets of 3 transformers (2 bus couplers) are used first, then a set of 2; more are added only when the loads cannot be balanced within the limits. 4000 kVA is for 690 V only.`],
+    [op.pairsOnly
+      ? `2-transformer sets only, each with a bus coupler (normally open; if one transformer is out the other takes the entire bus load of its set); more pairs are added only when the loads do not fit. 4000 kVA is for 690 V only.`
+      : `Sets of 3 transformers (2 bus couplers) are used first, then a set of 2; more are added only when the loads cannot be balanced within the limits. 4000 kVA is for 690 V only.`],
     [],
     [label("Why this number of transformers is not an excess")],
     ...w.checks.map((t): Row => [t]),

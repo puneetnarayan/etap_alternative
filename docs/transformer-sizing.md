@@ -2,6 +2,10 @@
 
 Source: the user's load-distribution brief (Rev 0) plus follow-up answers. Code: `src/core/transformer-sizing.ts`.
 
+## 2-transformer sets only (third "Start with" option)
+
+Radio "2-transformer sets only": exactly 2 transformers with a bus coupler (2 incomers + 1 coupler). The coupler is **normally open** and each transformer feeds its own section (the loads are balanced between the two with the usual placement and duty-group rules). If one transformer is down the coupler closes and **the other takes the entire bus load**: the whole load of the pair must be within the one-out limit of one transformer (default 90 % of its rating). If it does not fit at the selected rating, **more pairs are added (2 + 2 + ...)**, each its own bus with its own coupler, up to 20 transformers; the rating chosen with the rating radio is the one tested, and the page suggests another standard rating when it does not fit. The fixed PMCC/IMCC feeders sit half on each side of the coupler. The Justification sheet states for each pair "if T1 is out, the other transformer takes the entire bus load X kVA = Y % of its rating". The normal and one-out maximum loadings (80 % / 90 %) are now editable on the page for all three options. In the code: `SizingOptions.pairsOnly`, `layoutFor(count, pairsOnly)`.
+
 ## Transformer-wise sheet and table
 
 The Excel report has a **Transformer-wise** sheet (second, after Summary) and the page shows the same table under the result (`src/core/transformer-wise.ts`):
