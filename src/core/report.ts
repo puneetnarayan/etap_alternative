@@ -1,5 +1,6 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
+import { transformerWise } from "./transformer-wise";
 import {
   STANDBY_NOT_COUNTED, currentOf, ratingsForVoltage, displayCombos, failureReason, spareKey,
   type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
@@ -288,6 +289,54 @@ function originalSheet(raw: NonNullable<ReportOptions["originalSheet"]>): Report
   };
 }
 
+/**
+ * "Transformer-wise": one row per transformer (kW, kVA, current, % loading) with the totals, then the tables that show the
+ * number of transformers taken is the smallest that fits (the numbers tried, and every count x rating tried).
+ */
+function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | undefined {
+  const w = transformerWise(r, o.options);
+  if (!w) return undefined;
+  const c = w.combo;
+  const bn = (v: number, format = "#,##0"): ReportCell => ({ value: v, format, fontWeight: "bold", align: "center", ...BORDER });
+  const bt = (v: string): ReportCell => ({ value: v, fontWeight: "bold", ...BORDER });
+  const power = o.includePower;
+  const data: Row[] = [
+    [title(`Transformer-wise loading: ${c.count} × ${c.chosen.ratingKva} kVA, ${o.transformerLabel}`)],
+    banner(c.fits ? "Fits within both limits" : "DOES NOT FIT within both limits", c.fits),
+    [`Current = kVA × 1000 / (√3 × ${o.options.calculationVoltageV[c.voltageV] ?? c.voltageV} V). Loading = kVA / transformer rating, normal running (limit ${fmtPct(w.normalLimitPct)} %). Standby (S) rows are not counted.`],
+    [],
+    [label("Load on each transformer (normal running)")],
+    heads("Transformer", "Set", "Loads", "kW (input)", ...(power ? ["kvar"] : []), "kVA", "Current (A)", "Rating (kVA)", "Rated current (A)", "Loading (%)", `Limit (${fmtPct(w.normalLimitPct)} %)`, "Margin to the limit (kVA)"),
+    ...w.rows.map((t): Row => [
+      cell(t.name), cell(t.set), cell(t.loads), n(t.kw), ...(power ? [n(t.kvar)] : []), n(t.kva), n(t.currentA), n(t.ratingKva), n(t.ratedCurrentA),
+      limited(t.loadingPct, t.limitPct), verdict(t.within ? "Within" : "Over", t.within), n(t.headroomKva),
+    ]),
+    [
+      bt("Total"), cell(""), bn(w.totals.loads), bn(w.totals.kw), ...(power ? [bn(w.totals.kvar)] : []), bn(w.totals.kva), bn(w.totals.currentA),
+      bn(w.totals.installedKva), bn(w.totals.ratedCurrentA), bn(w.totals.loadingPct, "0.0"), cell(""), bn(w.totals.headroomKva),
+    ],
+    [`Total row: kW, kVA and current are the sums over the transformers; "Rating" is the installed kVA; "Loading" is total load / installed kVA (the average).`],
+    [],
+    [label("Why this number of transformers is not an excess")],
+    ...w.checks.map((t): Row => [t]),
+    [],
+    [label("Numbers of transformers tried (each with the smallest rating that fits)")],
+    heads("Transformers", "Sets", "Rating (kVA)", "Installed kVA", "Total load (kVA)", "Average normal loading (%)", "One out loading (%)", "Capacity within the limits (kVA)", "Margin (kVA)", "Result", "Taken"),
+    ...w.quantity.map((q): Row => [
+      cell(q.count), cell(q.layout.join(" + "), "center"), n(q.ratingKva), n(q.installedKva), n(q.totalKva), limited(q.normalPct, w.normalLimitPct), limited(q.oneOutPct, w.oneOutLimitPct),
+      n(q.capacityKva), n(q.marginKva), verdict(q.fits ? "Fits" : "Does not fit", q.fits), q.final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""),
+    ]),
+    [],
+    [label("Every number and rating tried, smallest installed capacity first")],
+    heads("Transformers", "Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result", "Taken"),
+    ...w.candidates.map((x): Row => [
+      cell(x.count), n(x.ratingKva), n(x.installedKva), limited(x.normalPct, w.normalLimitPct), limited(x.contingencyPct, w.oneOutLimitPct),
+      verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits), x.final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""),
+    ]),
+  ];
+  return { sheet: "Transformer-wise", data, columns: autoColumns(data) };
+}
+
 function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
   const power: Row = o.includePower ? [n(r.totals.kw), n(r.totals.kvar), n(r.totals.powerFactor, "0.00")] : [];
   const bold = (v: string): ReportCell => ({ value: v, fontWeight: "bold", ...BORDER });
@@ -456,8 +505,10 @@ function issuesSheet(r: SizingResult): ReportSheet {
 }
 
 export function buildReportSheets(result: SizingResult, o: ReportOptions): ReportSheet[] {
+  const wise = transformerWiseSheet(result, o);
   const sheets: ReportSheet[] = [
     summarySheet(result, o),
+    ...(wise ? [wise] : []),
     ...(o.originalSheet ? [originalSheet(o.originalSheet)] : []),
     loadsSheet(result, o),
     ...displayCombos(result).map((c) => comboSheet(c, o, result.spares)),

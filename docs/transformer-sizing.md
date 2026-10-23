@@ -2,6 +2,15 @@
 
 Source: the user's load-distribution brief (Rev 0) plus follow-up answers. Code: `src/core/transformer-sizing.ts`.
 
+## Transformer-wise sheet and table
+
+The Excel report has a **Transformer-wise** sheet (second, after Summary) and the page shows the same table under the result (`src/core/transformer-wise.ts`):
+
+1. **Per transformer** (normal running): number of loads, kW (input), kVA, current on the secondary (kVA x 1000 / (√3 x V)), rating, rated current, **% loading** (green within the normal limit, red over) and the margin to the limit; then a **Total** row (sums of loads, kW, kvar, kVA and current; installed kVA; average loading = total load / installed).
+2. **Why this number of transformers is not an excess**: utilisation of the installed capacity; what the number taken can carry within both limits and the margin over the load (also as a share of what one transformer adds); the next smaller number tried and by how much it is short; smaller ratings at this number and why they do not fit; and whether this combination has the smallest installed capacity of all that fit.
+3. **Numbers of transformers tried**: each count with the smallest rating that fits, installed kVA, total load, average normal and one-out loading, capacity within the limits, margin (negative = short), result; the number taken is marked.
+4. **Every number and rating tried**, smallest installed capacity first (Excel only).
+
 ## Ratings, factors and the editable feeder block (latest)
 
 - **4000 kVA is for the 690 V system only.** At 433 V the ratings are 2000 and 2500 kVA (`ratingsForVoltage`); the 4000 kVA radio is disabled unless 690 V is the only level selected, and the core never tries 4000 kVA at 433 V.
