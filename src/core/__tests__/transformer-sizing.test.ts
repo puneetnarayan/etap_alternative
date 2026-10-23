@@ -214,8 +214,8 @@ describe("combos and one-out check", () => {
     expect(r.combos[0].sections).toHaveLength(2);
   });
   it("custom rating list is used", () => {
-    const r = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [1600], counts: [2] });
-    expect(r.combos[0].chosen.ratingKva).toBe(1600);
+    const r = sizeTransformers(rows, 433, { ...DEFAULT_OPTIONS, ratingsKva: [2500], counts: [2] });
+    expect(r.combos[0].chosen.ratingKva).toBe(2500);
   });
 });
 
@@ -332,15 +332,15 @@ describe("sample workbook end to end", () => {
     expect(two.fits).toBe(false);
   });
 
-  it("690 V group fits 2 x 2000", async () => {
+  it("690 V group fits 2 x 4000 (the only rating at 690 V)", async () => {
     const parsed = parseLoadSheet(await readSheet(buf));
     const r = sizeTransformers(parsed.rows, 690, BOTH);
     expect(r.loads).toHaveLength(2);
     expect(r.totalKva).toBeCloseTo(450 / 0.665 + 355 / 0.855, 6); // ~1091.9
-    expect(r.recommended).toMatchObject({ count: 2, ratingKva: 2000 }); // 2 x 2000 carries 1800 kVA
+    expect(r.recommended).toMatchObject({ count: 2, ratingKva: 4000 }); // 690 V takes 4000 kVA only: 2 x 4000 carries 3600 kVA
     expect(r.couplers).toBe(1);
     // the page starts with 3 transformers; a set of 2 is used first only when asked for
-    expect(sizeTransformers(parsed.rows, 690).recommended).toMatchObject({ count: 3, ratingKva: 2000 });
+    expect(sizeTransformers(parsed.rows, 690).recommended).toMatchObject({ count: 3, ratingKva: 4000 });
     expect(sizeTransformers(parsed.rows, 690, { ...DEFAULT_OPTIONS, counts: [2] }).recommended).toMatchObject({ count: 2 });
   });
 });
@@ -460,26 +460,18 @@ describe("more transformers = independent sets of 2 or 3", () => {
       expect(Math.max(...per) - Math.min(...per)).toBeLessThanOrEqual(1);
     }
   });
-  it("up to 20 transformers by default; gives up there with no recommendation", () => {
-    expect(DEFAULT_OPTIONS.maxTransformers).toBe(20);
-    const r = sizeTransformers(loadsKva(30000, 120), 433, only2000); // 23,400 kVA is the most 20 can carry
-    expect(r.recommended).toBeUndefined();
-    expect(Math.max(...r.combos.map((c) => c.count))).toBe(20);
-    expect(r.combos.every((c) => !c.fits)).toBe(true);
-    expect(r.combos.map((c) => c.count)).toEqual([3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18, 20]);
-    expect(displayCombos(r).map((c) => c.count)).toEqual([3, 20]);
-    // 22,000 kVA in 120 loads of 183.3 kVA can be placed on 20 (a set of 3 holds 19, the set of 2 holds 9)
-    const fits20 = sizeTransformers(loadsKva(22000, 120), 433, only2000);
-    expect(fits20.recommended).toMatchObject({ count: 20 });
-    // 23,000 kVA is within the ideal 23,400 kVA but whole loads cannot be packed that tightly (117 of 120 fit)
-    const tight = sizeTransformers(loadsKva(23000, 120), 433, only2000);
-    const last = tight.combos[tight.combos.length - 1];
-    expect(last.count).toBe(20);
-    expect(last.chosen.normalOk && last.chosen.contingencyOk).toBe(true);
-    expect(last.chosen.balanced).toBe(false);
-    expect(tight.recommended).toBeUndefined();
-    expect(failureReason(last.chosen)).toBe("loads cannot be balanced within the limits");
+  it("no limit of 20: transformers are added as the calculation requires (ceiling 1000 only stops a runaway)", () => {
+    expect(DEFAULT_OPTIONS.maxTransformers).toBe(1000);
+    // 120 loads of 250 kVA = 30,000 kVA on 2000 kVA units. A set of 3 carries 3,600 kVA (one out, 90 %), a set of 2 carries 1,800 kVA.
+    // 8 sets of 3 + 1 set of 2 = 26 transformers carry 30,600 kVA ideally, but whole 250 kVA loads give 8 x 14 + 7 = 119 < 120 placed;
+    // 9 sets of 3 = 27 transformers place 9 x 14 = 126 >= 120.
+    const r = sizeTransformers(loadsKva(30000, 120), 433, only2000);
+    expect(r.recommended).toMatchObject({ count: 27 });
+    expect(r.combos.some((c) => c.count > 20)).toBe(true);
+    expect(r.combos.map((c) => c.count).slice(0, 12)).toEqual([3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18, 20]);
+    // a lower ceiling still applies when given
     expect(sizeTransformers(loadsKva(30000, 120), 433, { ...only2000, maxTransformers: 3 }).combos.map((c) => c.count)).toEqual([3]);
+    expect(sizeTransformers(loadsKva(30000, 120), 433, { ...only2000, maxTransformers: 20 }).recommended).toBeUndefined();
   });
   it("standby pairs stay on different sections with several sets", () => {
     const rows = [
@@ -608,11 +600,11 @@ describe("real load balancing decides whether a number of transformers fits", ()
     }
   });
 
-  it("stays fast when no placement exists (tight 20-transformer case)", () => {
+  it("stays fast when 20 transformers cannot place the loads and more are added", () => {
     const t0 = Date.now();
     const rows = kvaRows(Array.from({ length: 120 }, () => 23000 / 120));
     const r = sizeTransformers(rows, 433, only2000);
-    expect(r.recommended).toBeUndefined();
+    expect(r.recommended!.count).toBeGreaterThan(20);
     expect(Date.now() - t0).toBeLessThan(5000);
   });
 });
@@ -804,7 +796,8 @@ describe("factors and the rating rule asked for", () => {
   });
   it("4000 kVA is for the 690 V system only", () => {
     expect(ratingsForVoltage(433)).toEqual([2000, 2500]);
-    expect(ratingsForVoltage(690)).toEqual([2000, 2500, 4000]);
+    expect(ratingsForVoltage(690)).toEqual([4000]); // 690 V takes the 4000 kVA transformer only
+    expect(ratingsForVoltage(690, [2000, 2500])).toEqual([4000]);
     expect(ratingsForVoltage(433, [4000])).toEqual([2000, 2500]); // nothing allowed left: the allowed standard ratings
     const r433 = sizeTransformers([mk({ rowNumber: 2, type: "Feeder", amps: 100 })], 433, { ...DEFAULT_OPTIONS, ratingsKva: [4000] });
     expect(r433.combos[0].candidates.map((c) => c.ratingKva)).toEqual([2000, 2500]);

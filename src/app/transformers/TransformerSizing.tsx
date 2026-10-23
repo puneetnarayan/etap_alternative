@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, ratingsForVoltage, type MccFeeder, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet, transformerWise,
+  DEFAULT_OPTIONS, STANDARD_MCC_FEEDERS, STANDARD_RATINGS_KVA, ratingsForVoltage, type MccFeeder, TRANSFORMER_OPTIONS, buildReportBlob, displayCombos, parseLoadSheet, layoutText, transformerWise,
   sizeTransformers,
   REPORT_COLORS, failureReason, fmtInt, fmtPct, fmtPf, kindColor,
   type Candidate, type ComboResult, type RawLoadRow, type SizingOptions, type SizingResult,
@@ -24,7 +24,7 @@ const withinColor = (ok: boolean) => (ok ? REPORT_COLORS.within : REPORT_COLORS.
 /** A centred cell shaded green when the value is within its limit (inclusive), light red when over. */
 const limitCell = (value: number, limitPct: number) => ({ ...td, ...shade(withinColor(value <= limitPct + 1e-9)) });
 /** A centred verdict cell (fits / OK / within) shaded green or light red. */
-const verdictCell = (ok: boolean) => ({ ...td, ...shade(withinColor(ok)) });
+const verdictCell = (ok: boolean) => ({ ...td, whiteSpace: "nowrap" as const, textAlign: "left" as const, ...shade(withinColor(ok)) });
 /** A cell shaded with the pastel for a W / S / DOL / VFD / Feeder value, if it has one. */
 const kindCell = (value: string, align: "center" | "left" = "left") => {
   const bg = kindColor(value);
@@ -122,8 +122,13 @@ export default function TransformerSizing() {
   // The choice is limited to what the file has: a level that is not in the file, or "both" when only one is, falls back.
   const effective: VoltageChoice = choice === "both" ? (both ? "both" : String(present[0] ?? 433) as VoltageChoice)
     : present.length === 0 || present.includes(Number(choice)) ? choice : (String(present[0]) as VoltageChoice);
-  // 4000 kVA exists for the 690 V system only: with any other selection a chosen 4000 falls back to 2500.
-  const allowedRating = effective !== "690" && rating > ratingsForVoltage(433).slice(-1)[0] ? ratingsForVoltage(433).slice(-1)[0] : rating;
+  // 690 V uses the 4000 kVA transformer only; 433 V uses the rating chosen (2000 or 2500 kVA).
+  const allowedRating = effective === "690" ? ratingsForVoltage(690)[0] : ratingsForVoltage(433).includes(rating) ? rating : ratingsForVoltage(433)[0];
+  // 2500 kVA raises the fault level: the choice is confirmed, Cancel keeps the previous rating.
+  const chooseRating = (r: number) => {
+    if (r === 2500 && rating !== 2500 && !window.confirm("This will raise the fault MVA, hence try to avoid.\n\nOK to proceed with 2500 kVA, Cancel to keep the current rating.")) return;
+    setRating(r);
+  };
   const selected = TRANSFORMER_OPTIONS.filter((t) => effective === "both" || String(t.secondaryV) === effective);
 
   const opts: SizingOptions = useMemo(() => ({
@@ -220,11 +225,11 @@ export default function TransformerSizing() {
         <fieldset style={{ border: "1px solid #888", borderRadius: 6 }}>
           <legend>Transformer rating</legend>
           {STANDARD_RATINGS_KVA.map((r) => {
-            // 4000 kVA is for the 690 V system only: offered when 690 V is the only level selected.
-            const allowed = effective === "690" ? true : ratingsForVoltage(433).includes(r);
+            // 2000 / 2500 kVA for the 433 V system, 4000 kVA for the 690 V system only.
+            const allowed = ratingsForVoltage(effective === "690" ? 690 : 433).includes(r);
             return (
               <label key={r} style={{ marginRight: 16, whiteSpace: "nowrap", opacity: allowed ? 1 : 0.5 }}>
-                <input type="radio" name="rating" disabled={!allowed} checked={allowedRating === r} onChange={() => setRating(r)} /> {fmtInt(r)} kVA{allowed ? "" : " (690 V only)"}
+                <input type="radio" name="rating" disabled={!allowed} checked={allowedRating === r} onChange={() => chooseRating(r)} /> {fmtInt(r)} kVA{allowed ? "" : r === 4000 ? " (690 V only)" : " (433 V only)"}
               </label>
             );
           })}
@@ -269,11 +274,11 @@ export default function TransformerSizing() {
             {combination === "pairs" ? (
               <>
                 Only sets of 2 transformers with a bus coupler. The coupler is normally open and each transformer feeds its own section; if one transformer is down, the other takes the entire bus load of its pair
-                (limited to the one-out loading below). If the loads do not fit, more pairs (2 + 2 + ...) are added, up to {DEFAULT_OPTIONS.maxTransformers} transformers.
+                (limited to the one-out loading below). If the loads do not fit, more pairs (2 + 2 + ...) are added, as many as the loads need.
               </>
             ) : (
               <>
-                The number of transformers is not fixed. If the loads cannot be balanced within the limits, more are added (up to {DEFAULT_OPTIONS.maxTransformers}):
+                The number of transformers is not fixed. If the loads cannot be balanced within the limits, more are added as the loads need (there is no fixed maximum):
                 more sets of 3 first, and a set of 2 at the end for the remainder. A bus coupler sits between neighbouring incomers in a set and none between sets.
               </>
             )}
@@ -322,7 +327,7 @@ export default function TransformerSizing() {
   );
 }
 
-const layoutText = (c: { layout: number[] }) => (c.layout.length > 1 ? ` (sets of ${c.layout.join(" + ")})` : "");
+const layoutNote = (c: { layout: number[] }) => (c.layout.length > 1 ? ` (${layoutText(c.layout)})` : "");
 
 function Results({ result, tx, opts, alternative, busy, onDownload }: {
   result: SizingResult; tx: string; opts: SizingOptions; alternative?: Candidate; busy: boolean; onDownload: () => void;
@@ -346,7 +351,7 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
         <>
           <div style={{ ...(rec ? shade(GOOD) : {}), padding: "12px 16px", borderRadius: 8, border: rec ? undefined : `1px solid ${BAD}` }}>
             {rec ? (
-              <div style={{ fontSize: 20 }}><b>{rec.count} × {fmtInt(rec.ratingKva)} kVA</b> transformers{layoutText(rec)}, {tx}</div>
+              <div style={{ fontSize: 20 }}><b>{rec.count} × {fmtInt(rec.ratingKva)} kVA</b> transformers{layoutNote(rec)}, {tx}</div>
             ) : (
               <div role="alert" style={{ color: BAD, fontSize: 18 }}>
                 {result.blockers.length > 0 ? (
@@ -355,11 +360,11 @@ function Results({ result, tx, opts, alternative, busy, onDownload }: {
                     <ul style={{ margin: "4px 0", fontSize: 15 }}>{result.blockers.map((m, i) => <li key={i}>{m}</li>)}</ul>
                   </>
                 ) : (
-                  <>No configuration fits: with up to {opts.maxTransformers} transformers of {fmtInt(opts.ratingsKva[0])} kVA the loads (total {fmtInt(result.totalKva)} kVA) cannot be balanced within the limits.</>
+                  <>No configuration fits: even with {opts.maxTransformers.toLocaleString("en-US")} transformers of {fmtInt(opts.ratingsKva[0])} kVA the loads (total {fmtInt(result.totalKva)} kVA) cannot be balanced within the limits.</>
                 )}
                 {alternative
-                  ? <> It would fit with <b>{alternative.count} × {fmtInt(alternative.ratingKva)} kVA</b>{layoutText(alternative)}.</>
-                  : <> No standard rating fits within {opts.maxTransformers} transformers.</>}
+                  ? <> It would fit with <b>{alternative.count} × {fmtInt(alternative.ratingKva)} kVA</b>{layoutNote(alternative)}.</>
+                  : <> No standard rating fits.</>}
               </div>
             )}
             <div>
@@ -461,7 +466,8 @@ function Wise({ result, opts }: { result: SizingResult; opts: SizingOptions }) {
       <p style={{ fontSize: 12, margin: "2px 0" }}>Current = kVA × 1000 / (√3 × V). Total row: sums over the transformers; Rating = installed kVA; Loading = total load / installed kVA.</p>
       <h4 style={{ margin: "8px 0 2px" }}>Why this number of transformers is not an excess</h4>
       <ul style={{ margin: "2px 0", fontSize: 13 }}>{w.checks.map((t, n) => <li key={n}>{t}</li>)}</ul>
-      <table style={{ borderCollapse: "collapse", marginTop: 6 }}>
+      <div style={{ overflowX: "auto", marginTop: 6 }}>
+      <table style={{ borderCollapse: "collapse" }}>
         <caption style={{ textAlign: "left" }}><b>Numbers of transformers tried</b> (each with the smallest rating that fits)</caption>
         <thead><tr>
           <th style={th}>Transformers</th><th style={th}>Sets</th><th style={th}>Rating (kVA)</th><th style={th}>Installed kVA</th><th style={th}>Total load (kVA)</th>
@@ -470,13 +476,14 @@ function Wise({ result, opts }: { result: SizingResult; opts: SizingOptions }) {
         <tbody>
           {w.quantity.map((q) => (
             <tr key={q.count} style={q.final ? { outline: "2px solid #4A86C5", outlineOffset: -2 } : undefined}>
-              <td style={td}>{q.count}{q.final ? " ◄ taken" : ""}</td><td style={td}>{q.layout.join(" + ")}</td><td style={td}>{fmtInt(q.ratingKva)}</td><td style={td}>{fmtInt(q.installedKva)}</td><td style={td}>{fmtInt(q.totalKva)}</td>
+              <td style={td}>{q.count}{q.final ? " ◄ taken" : ""}</td><td style={{ ...td, whiteSpace: "nowrap" }}>{layoutText(q.layout)}</td><td style={td}>{fmtInt(q.ratingKva)}</td><td style={td}>{fmtInt(q.installedKva)}</td><td style={td}>{fmtInt(q.totalKva)}</td>
               <td style={limitCell(q.normalPct, w.normalLimitPct)}>{fmtPct(q.normalPct)}</td><td style={limitCell(q.oneOutPct, w.oneOutLimitPct)}>{fmtPct(q.oneOutPct)}</td>
               <td style={td}>{fmtInt(q.capacityKva)}</td><td style={td}>{fmtInt(q.marginKva)}</td><td style={verdictCell(q.fits)}>{q.fits ? "Fits" : "Does not fit"}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -493,7 +500,7 @@ function Tried({ combos, recommendedCount, opts }: { combos: ComboResult[]; reco
         <tbody>
           {combos.map((c) => (
             <tr key={c.count}>
-              <td style={td}>{c.count}</td><td style={td}>{c.layout.join(" + ")}</td>
+              <td style={td}>{c.count}</td><td style={{ ...td, whiteSpace: "nowrap" }}>{layoutText(c.layout)}</td>
               <td style={td}>{fmtInt(c.chosen.maxLoadKva)}</td>
               <td style={limitCell(c.chosen.normalPct, opts.normalLimit * 100)}>{fmtPct(c.chosen.normalPct)}</td>
               <td style={limitCell(c.chosen.contingencyPct, opts.contingencyLimit * 100)}>{fmtPct(c.chosen.contingencyPct)}</td>
@@ -514,7 +521,7 @@ function Combo({ combo: c, recommended, opts, tx }: { combo: ComboResult; recomm
   return (
     <section style={{ border: `1px solid ${recommended ? "rgb(40,160,70)" : "#888"}`, borderRadius: 8, padding: "4px 16px 12px", margin: "16px 0" }}>
       <h4 style={{ marginBottom: 4 }}>
-        {c.count} transformers{layoutText(c)}: {c.fits ? <>{fmtInt(c.chosen.ratingKva)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmtInt(c.chosen.ratingKva)} kVA shown)</span>}
+        {c.count} transformers{layoutNote(c)}: {c.fits ? <>{fmtInt(c.chosen.ratingKva)} kVA each, {tx}</> : <span style={{ color: BAD }}>does not fit ({fmtInt(c.chosen.ratingKva)} kVA shown)</span>}
         {recommended && <span style={{ ...shade(GOOD), borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>recommended</span>}
         {c.added && <span style={{ border: "1px solid #888", borderRadius: 4, padding: "2px 8px", marginLeft: 8 }}>added: fewer could not be balanced</span>}
       </h4>

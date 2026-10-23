@@ -19,3 +19,4 @@ Not resolved by guessing. Accepted calculation conventions are unchanged unless 
 | 13 | The incomer limit applies to design current (working x 1.25), at most the selected ACB x 90 % (adjustable). | Confirmed (90 % on design current) |
 | 14 | Diversity factor is a multiplier on the loads of the list (default 1; 0.8 = 80 % of the sum). | Confirmed |
 | 15 | Motor load factor applies to motors only, default 100 %. Standards review items still open: fault level against the switchgear rating, motor-starting voltage dip, VFD harmonics, incomer and busbar rating. | Open |
+| 16 | 690 V uses the 4000 kVA transformer only; 2500 kVA asks for confirmation (raises the fault MVA, to be avoided). Fault level against the switchgear rating is not yet calculated (see 15). No limit of 20 transformers any more (ceiling 1000). | Confirmed; fault-level check open |

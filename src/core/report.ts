@@ -1,6 +1,6 @@
 import writeExcelFile from "write-excel-file/universal";
 import { fmtInt, fmtPct } from "./format";
-import { transformerWise } from "./transformer-wise";
+import { layoutText, transformerWise } from "./transformer-wise";
 import {
   STANDBY_NOT_COUNTED, currentOf, ratingsForVoltage, displayCombos, failureReason, spareKey,
   type ComboResult, type SetResult, type SizingOptions, type SizingResult, type SpareFeeder,
@@ -79,6 +79,8 @@ const head = (v: string): ReportCell => ({
   value: v, fontWeight: "bold", backgroundColor: REPORT_COLORS.header, align: "center", alignVertical: "center", ...BORDER,
 });
 const heads = (...h: string[]): Row => h.map(head);
+/** Header cells that wrap onto several lines, for tables with explicit column widths. */
+const wrapHeads = (...h: string[]): Row => h.map((t) => ({ ...(head(t) as object), wrap: true }) as ReportCell);
 /** Plain table cell: numbers are centred, text is left-aligned. */
 const cell = (v: string | number, align: "left" | "right" | "center" = typeof v === "number" ? "center" : "left"): ReportCell =>
   typeof v === "number" ? { value: v, format: "#,##0", align, ...BORDER } : { value: v, align, ...BORDER };
@@ -242,7 +244,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     [],
     blockHeader("Recommendation"),
     rec
-      ? kv("Recommended", verdict(`${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (sets of ${rec.layout.join(" + ")})` : ""}`, true))
+      ? kv("Recommended", verdict(`${rec.count} × ${rec.ratingKva} kVA${rec.layout.length > 1 ? ` (${layoutText(rec.layout)})` : ""}`, true))
       : kv("Recommended", verdict(r.blockers.length > 0 ? "None: a load is too big for any transformer section" : "No configuration fits the ratings considered", false)),
     ...r.blockers.map((m): Row => kvText("Cannot be placed", m)),
     ...(rec ? [kv("Incomers", cell(rec.count)), kv("Bus couplers", cell(rec.count - rec.layout.length))] : []),
@@ -250,7 +252,7 @@ function summarySheet(r: SizingResult, o: ReportOptions): ReportSheet {
     [label("Numbers of transformers tried")],
     heads("Transformers", "Sets", "Rating (kVA)", "Fits", "Total load (kVA)", "Max load (kVA)", "Average normal loading (%)", "One out loading (%)"),
     ...r.combos.map((c): Row => [
-      cell(c.count), cell(c.layout.join(" + "), "center"), cell(c.chosen.ratingKva), verdict(c.fits ? "Yes" : "No", c.fits),
+      cell(c.count), cell(layoutText(c.layout), "center"), cell(c.chosen.ratingKva), verdict(c.fits ? "Yes" : "No", c.fits),
       n(c.totalKva), n(c.chosen.maxLoadKva), limited(c.chosen.normalPct, normalPct), limited(c.chosen.contingencyPct, contPct),
     ]),
   ];
@@ -290,6 +292,9 @@ function originalSheet(raw: NonNullable<ReportOptions["originalSheet"]>): Report
   };
 }
 
+/** The "Taken" marker of the number and rating that is used. */
+const taken = (final: boolean): ReportCell => (final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""));
+
 /**
  * "Transformer-wise": one row per transformer (kW, kVA, current, % loading) with the totals. The explanation that the number
  * taken is the smallest that fits is on the "Justification" sheet.
@@ -307,7 +312,7 @@ function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | 
     [`Current = kVA × 1000 / (√3 × ${o.options.calculationVoltageV[c.voltageV] ?? c.voltageV} V). Loading = kVA / transformer rating, normal running (limit ${fmtPct(w.normalLimitPct)} %). Standby (S) rows are not counted.`],
     [],
     [label("Load on each transformer (normal running)")],
-    heads("Transformer", "Set", "Loads", "kW (input)", ...(power ? ["kvar"] : []), "kVA", "Current (A)", "Rating (kVA)", "Rated current (A)", "Loading (%)", `Limit (${fmtPct(w.normalLimitPct)} %)`, "Margin to the limit (kVA)"),
+    wrapHeads("Transformer", "Set", "Loads", "kW (input)", ...(power ? ["kvar"] : []), "kVA", "Current (A)", "Rating (kVA)", "Rated current (A)", "Loading (%)", `Limit (${fmtPct(w.normalLimitPct)} %)`, "Margin to the limit (kVA)"),
     ...w.rows.map((t): Row => [
       cell(t.name), cell(t.set), cell(t.loads), n(t.kw), ...(power ? [n(t.kvar)] : []), n(t.kva), n(t.currentA), n(t.ratingKva), n(t.ratedCurrentA),
       limited(t.loadingPct, t.limitPct), verdict(t.within ? "Within" : "Over", t.within), n(t.headroomKva),
@@ -318,7 +323,8 @@ function transformerWiseSheet(r: SizingResult, o: ReportOptions): ReportSheet | 
     ],
     [`Total row: kW, kVA and current are the sums over the transformers; "Rating" is the installed kVA; "Loading" is total load / installed kVA (the average).`],
   ];
-  return { sheet: "Transformer-wise", data, columns: autoColumns(data) };
+  const widths = [16, 7, 8, 13, ...(power ? [13] : []), 13, 13, 13, 15, 12, 14, 18];
+  return { sheet: "Transformer-wise", data, columns: widths.map((width) => ({ width })) };
 }
 
 /**
@@ -345,20 +351,22 @@ function justificationSheet(r: SizingResult, o: ReportOptions): ReportSheet | un
     ...w.checks.map((t): Row => [t]),
     [],
     [label("Numbers of transformers tried (each with the smallest rating that fits)")],
-    heads("Transformers", "Sets", "Rating (kVA)", "Installed kVA", "Total load (kVA)", "Average normal loading (%)", "One out loading (%)", "Capacity within the limits (kVA)", "Margin (kVA)", "Result", "Taken"),
+    wrapHeads("Transformers", "Sets", "Rating (kVA)", "Installed (kVA)", "Average normal loading (%)", "One out loading (%)", "Total load (kVA)", "Capacity within the limits (kVA)", "Margin (kVA)", "Result", "Taken"),
     ...w.quantity.map((q): Row => [
-      cell(q.count), cell(q.layout.join(" + "), "center"), n(q.ratingKva), n(q.installedKva), n(q.totalKva), limited(q.normalPct, w.normalLimitPct), limited(q.oneOutPct, w.oneOutLimitPct),
-      n(q.capacityKva), n(q.marginKva), verdict(q.fits ? "Fits" : "Does not fit", q.fits), q.final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""),
+      cell(q.count), cell(layoutText(q.layout), "center"), n(q.ratingKva), n(q.installedKva), limited(q.normalPct, w.normalLimitPct), limited(q.oneOutPct, w.oneOutLimitPct),
+      n(q.totalKva), n(q.capacityKva), n(q.marginKva), verdict(q.fits ? "Fits" : "Does not fit", q.fits), taken(q.final),
     ]),
     [],
     [label("Every number and rating tried, smallest installed capacity first")],
-    heads("Transformers", "Rating (kVA)", "Installed kVA", "Average normal loading (%)", "One out loading (%)", "Result", "Taken"),
+    // Result is merged over the columns to its right (Total load .. Result) so a reason is never cut off
+    [...wrapHeads("Transformers", "Sets", "Rating (kVA)", "Installed (kVA)", "Average normal loading (%)", "One out loading (%)"), { ...(head("Result") as object), columnSpan: 4 } as ReportCell, null, null, null, head("Taken")],
     ...w.candidates.map((x): Row => [
-      cell(x.count), n(x.ratingKva), n(x.installedKva), limited(x.normalPct, w.normalLimitPct), limited(x.contingencyPct, w.oneOutLimitPct),
-      verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits), x.final ? { value: "◄ taken", fontWeight: "bold", align: "center", backgroundColor: REPORT_COLORS.header, ...BORDER } : cell(""),
+      cell(x.count), cell(layoutText(x.layout), "center"), n(x.ratingKva), n(x.installedKva), limited(x.normalPct, w.normalLimitPct), limited(x.contingencyPct, w.oneOutLimitPct),
+      { ...(verdict(x.fits ? "Fits" : `Does not fit: ${failureReason(x)}`, x.fits) as object), columnSpan: 4 } as ReportCell, null, null, null, taken(x.final),
     ]),
   ];
-  return { sheet: "Justification", data, columns: autoColumns(data) };
+  const widths = [15, 26, 12, 14, 16, 14, 16, 18, 13, 18, 11];
+  return { sheet: "Justification", data, columns: widths.map((width) => ({ width })) };
 }
 
 function loadsSheet(r: SizingResult, o: ReportOptions): ReportSheet {
